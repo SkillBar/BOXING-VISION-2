@@ -1,0 +1,12 @@
+gradio<6,>=5.44
+numpy<3,>=1.26
+opencv-python<5,>=4.10
+opencv-contrib-python<5,>=4.10
+onnxruntime<2,>=1.20
+pillow<13,>=10
+rtmlib<0.1,>=0.0.14
+scipy<2,>=1.12
+
+[dev]
+pytest<9,>=8
+pytest-cov<7,>=5

@@ -1,0 +1,134 @@
+{
+  "disclaimer": "Неофициальная экспериментальная AI-оценка; не является судейским решением.",
+  "fighter_a_id": "fighter_a",
+  "fighter_b_id": "fighter_b",
+  "fighters": {
+    "fighter_a": {
+      "name": "Пиитулайнен",
+      "attempts": 18,
+      "likely_landed": 1,
+      "blocked": 12,
+      "missed": 1,
+      "unclear": 4,
+      "accuracy": 0.0714,
+      "average_impact_proxy": 56.4,
+      "techniques": {
+        "hook": 4,
+        "straight": 8,
+        "unknown": 1,
+        "uppercut": 5
+      },
+      "hands": {
+        "left": 7,
+        "right": 11
+      },
+      "id": "fighter_a",
+      "corner": "red",
+      "stats": {
+        "attempts": 18,
+        "likely_landed": 1,
+        "blocked": 12,
+        "missed": 1,
+        "unclear": 4,
+        "accuracy": 0.0714,
+        "average_impact_proxy": 56.4,
+        "techniques": {
+          "hook": 4,
+          "straight": 8,
+          "unknown": 1,
+          "uppercut": 5
+        },
+        "hands": {
+          "left": 7,
+          "right": 11
+        }
+      }
+    },
+    "fighter_b": {
+      "name": "Ванес",
+      "attempts": 26,
+      "likely_landed": 4,
+      "blocked": 11,
+      "missed": 3,
+      "unclear": 8,
+      "accuracy": 0.2222,
+      "average_impact_proxy": 55.6,
+      "techniques": {
+        "hook": 7,
+        "straight": 11,
+        "unknown": 1,
+        "uppercut": 7
+      },
+      "hands": {
+        "left": 15,
+        "right": 11
+      },
+      "id": "fighter_b",
+      "corner": "blue",
+      "stats": {
+        "attempts": 26,
+        "likely_landed": 4,
+        "blocked": 11,
+        "missed": 3,
+        "unclear": 8,
+        "accuracy": 0.2222,
+        "average_impact_proxy": 55.6,
+        "techniques": {
+          "hook": 7,
+          "straight": 11,
+          "unknown": 1,
+          "uppercut": 7
+        },
+        "hands": {
+          "left": 15,
+          "right": 11
+        }
+      }
+    }
+  },
+  "round_scores": [
+    {
+      "round": 1,
+      "fighter_a_points": 9,
+      "fighter_b_points": 10,
+      "fighter_a_index": 24.587,
+      "fighter_b_index": 75.413,
+      "confidence": 0.7775,
+      "reason": "Преимущество по взвешенным эффективным попаданиям"
+    }
+  ],
+  "score_total": {
+    "fighter_a": 9,
+    "fighter_b": 10
+  },
+  "winner_id": "fighter_b",
+  "winner_name": "Ванес",
+  "confidence": 0.7775,
+  "weights": {
+    "effective_landed": 0.7,
+    "accuracy": 0.15,
+    "activity": 0.1,
+    "pressure_proxy": 0.05
+  },
+  "winner": {
+    "fighter_id": "fighter_b",
+    "name": "Ванес",
+    "confidence": 0.7775,
+    "label": "Экспериментальный прогноз"
+  },
+  "metadata": {
+    "duration_s": 12.0,
+    "processing_s": 29.874,
+    "backend": "rtmlib-rtmpose",
+    "analysis_fps": 10.0,
+    "output_fps": 30,
+    "generated_at": "2026-08-05T18:38:28.747776+00:00",
+    "disclaimer": "Неофициальная экспериментальная AI-оценка; не является судейским решением."
+  },
+  "quality": {
+    "tracking_confidence": 0.5915,
+    "event_confidence": 0.7615,
+    "pose_observations": 208,
+    "event_candidates": 44
+  }
+}

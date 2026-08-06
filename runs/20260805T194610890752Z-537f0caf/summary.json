@@ -1,0 +1,134 @@
+{
+  "disclaimer": "Неофициальная экспериментальная AI-оценка; не является судейским решением.",
+  "fighter_a_id": "fighter_a",
+  "fighter_b_id": "fighter_b",
+  "fighters": {
+    "fighter_a": {
+      "name": "Красный угол",
+      "attempts": 7,
+      "likely_landed": 1,
+      "blocked": 4,
+      "missed": 0,
+      "unclear": 2,
+      "accuracy": 0.2,
+      "average_impact_proxy": 60.1,
+      "techniques": {
+        "hook": 1,
+        "straight": 4,
+        "unknown": 1,
+        "uppercut": 1
+      },
+      "hands": {
+        "left": 3,
+        "right": 4
+      },
+      "id": "fighter_a",
+      "corner": "red",
+      "stats": {
+        "attempts": 7,
+        "likely_landed": 1,
+        "blocked": 4,
+        "missed": 0,
+        "unclear": 2,
+        "accuracy": 0.2,
+        "average_impact_proxy": 60.1,
+        "techniques": {
+          "hook": 1,
+          "straight": 4,
+          "unknown": 1,
+          "uppercut": 1
+        },
+        "hands": {
+          "left": 3,
+          "right": 4
+        }
+      }
+    },
+    "fighter_b": {
+      "name": "Синий угол",
+      "attempts": 5,
+      "likely_landed": 2,
+      "blocked": 1,
+      "missed": 1,
+      "unclear": 1,
+      "accuracy": 0.5,
+      "average_impact_proxy": 61.6,
+      "techniques": {
+        "hook": 2,
+        "straight": 1,
+        "unknown": 1,
+        "uppercut": 1
+      },
+      "hands": {
+        "left": 5
+      },
+      "id": "fighter_b",
+      "corner": "blue",
+      "stats": {
+        "attempts": 5,
+        "likely_landed": 2,
+        "blocked": 1,
+        "missed": 1,
+        "unclear": 1,
+        "accuracy": 0.5,
+        "average_impact_proxy": 61.6,
+        "techniques": {
+          "hook": 2,
+          "straight": 1,
+          "unknown": 1,
+          "uppercut": 1
+        },
+        "hands": {
+          "left": 5
+        }
+      }
+    }
+  },
+  "round_scores": [
+    {
+      "round": 1,
+      "fighter_a_points": 9,
+      "fighter_b_points": 10,
+      "fighter_a_index": 36.568,
+      "fighter_b_index": 63.432,
+      "confidence": 0.699,
+      "reason": "Преимущество по взвешенным эффективным попаданиям"
+    }
+  ],
+  "score_total": {
+    "fighter_a": 9,
+    "fighter_b": 10
+  },
+  "winner_id": "fighter_b",
+  "winner_name": "Синий угол",
+  "confidence": 0.699,
+  "weights": {
+    "effective_landed": 0.7,
+    "accuracy": 0.15,
+    "activity": 0.1,
+    "pressure_proxy": 0.05
+  },
+  "winner": {
+    "fighter_id": "fighter_b",
+    "name": "Синий угол",
+    "confidence": 0.699,
+    "label": "Экспериментальный прогноз"
+  },
+  "metadata": {
+    "duration_s": 3.0,
+    "processing_s": 4.232,
+    "backend": "rtmlib-rtmpose",
+    "analysis_fps": 10.0,
+    "output_fps": 30,
+    "generated_at": "2026-08-05T19:46:12.291544+00:00",
+    "confirmed_knockdowns_suffered": {},
+    "disclaimer": "Неофициальная экспериментальная AI-оценка; не является судейским решением."
+  },
+  "quality": {
+    "tracking_confidence": 0.6032,
+    "event_confidence": 0.7712,
+    "pose_observations": 51,
+    "event_candidates": 12,
+    "possible_knockdowns": 0
+  }
+}
