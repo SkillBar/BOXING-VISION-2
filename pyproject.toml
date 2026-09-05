@@ -9,7 +9,7 @@ description = "Local, confidence-aware boxing broadcast analysis prototype"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "gradio>=5.44,<6",
+  "gradio==5.50.0",
   "numpy>=1.26,<3",
   # RTMLib currently declares both OpenCV wheels. Pin them to one compatible
   # release family and do not add a third headless distribution.
@@ -19,6 +19,11 @@ dependencies = [
   "pillow>=10,<13",
   "rtmlib==0.0.16",
   "scipy>=1.12,<2",
+  "trackers==2.6.0",
+  # 0.30 adds PyAV alongside OpenCV's bundled FFmpeg; avoid duplicate macOS
+  # AVFoundation Objective-C classes in the same process.
+  "supervision==0.26.1",
+  "scenedetect==0.7.1",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +37,9 @@ boxing-vision = "boxing_vision.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["boxing_vision*"]
+
+[tool.setuptools.package-data]
+boxing_vision = ["static/*.css", "static/*.js", "static/assets/*.png", "static/assets/*.jpg", "static/assets/*.json", "static/assets/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

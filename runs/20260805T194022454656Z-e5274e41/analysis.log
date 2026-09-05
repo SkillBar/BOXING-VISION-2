@@ -1,6 +1,0 @@
-2026-08-05T19:40:22.456292+00:00 job=20260805T194022454656Z-e5274e41 source_name=boxing_test_12s.mp4
-2026-08-05T19:40:22.520061+00:00 input={'path': 'boxing_test_12s.mp4', 'duration_s': 12.0, 'width': 960, 'height': 528, 'fps': 25.0, 'frame_count': 300, 'video_codec': 'h264', 'has_audio': True, 'audio_codec': 'aac', 'rotation': 0, 'size_bytes': 3935080}
-2026-08-05T19:40:22.739951+00:00 fighter anchors initialized from confirmation frame
-2026-08-05T19:40:24.377505+00:00 backend=rtmlib-rtmpose analysed_frames=30 observations=51 replay_intervals=[]
-2026-08-05T19:40:24.393693+00:00 events=12 rounds=1
-2026-08-05T19:40:30.697167+00:00 completed processing_s=8.239

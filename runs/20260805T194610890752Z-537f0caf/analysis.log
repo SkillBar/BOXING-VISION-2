@@ -1,5 +1,0 @@
-2026-08-05T19:46:10.891605+00:00 job=20260805T194610890752Z-537f0caf source_name=boxing_test_12s.mp4
-2026-08-05T19:46:10.945416+00:00 input={'path': 'boxing_test_12s.mp4', 'duration_s': 12.0, 'width': 960, 'height': 528, 'fps': 25.0, 'frame_count': 300, 'video_codec': 'h264', 'has_audio': True, 'audio_codec': 'aac', 'rotation': 0, 'size_bytes': 3935080}
-2026-08-05T19:46:12.287684+00:00 backend=rtmlib-rtmpose analysed_frames=30 observations=51 replay_intervals=[]
-2026-08-05T19:46:12.291621+00:00 events=12 rounds=1
-2026-08-05T19:46:15.123892+00:00 completed processing_s=4.232

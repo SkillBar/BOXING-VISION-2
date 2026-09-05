@@ -6,12 +6,14 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from boxing_vision.artifacts import (
     atomic_write_json,
     create_job_artifacts,
     extract_event_clips,
     finalize_h264_video,
+    persist_fighter_portrait,
 )
 from boxing_vision.contracts import PunchEvent
 from boxing_vision.video import normalize_video
@@ -187,6 +189,41 @@ def test_atomic_write_json_handles_unicode_paths_and_dataclasses(
     assert json.loads(target.read_text(encoding="utf-8")) == {"replaced": True}
 
 
+def test_persist_fighter_portrait_crops_to_private_run_relative_webp(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "private-original-name.png"
+    Image.new("RGB", (480, 240), (220, 40, 40)).save(source)
+    run_dir = tmp_path / "runs" / "job-001"
+    run_dir.mkdir(parents=True)
+
+    stored = persist_fighter_portrait(source, run_dir, "fighter_a")
+
+    assert stored == "profiles/fighter_a.webp"
+    destination = run_dir / stored
+    assert destination.is_file()
+    with Image.open(destination) as portrait:
+        assert portrait.size == (256, 256)
+        assert portrait.mode == "RGB"
+    assert source.name not in stored
+    assert not list((run_dir / "profiles").glob("*.tmp.webp"))
+
+
+def test_persist_fighter_portrait_rejects_invalid_input_without_partial_file(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "not-an-image.txt"
+    source.write_text("not an image", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(ValueError, match="портрета"):
+        persist_fighter_portrait(source, run_dir, "fighter_b")
+
+    assert not (run_dir / "profiles" / "fighter_b.webp").exists()
+    assert not list((run_dir / "profiles").glob("*.tmp.webp"))
+
+
 @pytest.mark.skipif(
     FFMPEG is None or FFPROBE is None, reason="ffmpeg/ffprobe unavailable"
 )
@@ -252,6 +289,22 @@ def test_finalize_h264_does_not_truncate_video_when_audio_ends_early(
 
     assert 2.9 <= _duration(output) <= 3.1
     assert any(stream["codec_type"] == "audio" for stream in _streams(output))
+
+
+@pytest.mark.skipif(FFMPEG is None or FFPROBE is None, reason="ffmpeg/ffprobe unavailable")
+@pytest.mark.parametrize("audio_duration", [0.3, 0.6, 1.2])
+def test_mux_bounds_audio_to_rendered_frames_not_unbounded_padding(tmp_path, audio_duration):
+    annotated, source = tmp_path / "picture.mp4", tmp_path / "audio.mp4"
+    _ffmpeg("-f", "lavfi", "-i", "color=c=black:s=96x64:r=30:d=0.6",
+            "-c:v", "libx264", str(annotated))
+    _make_video(source, duration=audio_duration, audio=True)
+    for index in range(2):
+        output = finalize_h264_video(annotated, source, tmp_path / f"mux-{index}.mp4")
+        streams = _probe_payload(output)["streams"]
+        video = next(s for s in streams if s["codec_type"] == "video")
+        audio = next(s for s in streams if s["codec_type"] == "audio")
+        assert int(video["nb_frames"]) == 18
+        assert abs(float(video["duration"]) - float(audio["duration"])) <= 1 / 30
 
 
 @pytest.mark.skipif(

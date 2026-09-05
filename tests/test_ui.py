@@ -43,6 +43,11 @@ def test_knockdown_round_parser_supports_repeated_rounds() -> None:
 def test_gradio_app_builds_with_private_analytics_disabled() -> None:
     app = build_app()
     assert app.analytics_enabled is False
+    fields = {item["props"].get("label"): item["props"] for item in app.config["components"]}
+    assert fields["Где искать бойцов"]["value"] == "none"
+    assert fields["Режим времени"]["value"] == "continuous"
+    assert fields["Что исправить кликом"]["choices"] == [("Красный A", "fighter_a"), ("Синий B", "fighter_b")]
+    assert "Исправление только выбранного сегмента" in fields
 
 
 @pytest.mark.parametrize("rotation", [90, 180, 270])

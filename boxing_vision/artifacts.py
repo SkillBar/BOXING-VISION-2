@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -13,7 +14,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, ImageOps, UnidentifiedImageError
+
 from .contracts import PunchEvent
+from .media_process import hidden_process_kwargs
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -192,6 +196,7 @@ def _run_ffmpeg(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            **hidden_process_kwargs(),
         )
         while True:
             try:
@@ -218,6 +223,59 @@ def _run_ffmpeg(
 def _temporary_media_path(destination: Path) -> Path:
     suffix = destination.suffix or ".mp4"
     return destination.parent / f".{destination.stem}.{uuid.uuid4().hex}.tmp{suffix}"
+
+
+def persist_fighter_portrait(
+    source_path: str | os.PathLike[str] | None,
+    run_dir: str | os.PathLike[str],
+    fighter_id: str,
+    *,
+    size: int = 256,
+) -> str | None:
+    """Store a privacy-safe square portrait and return its run-relative path.
+
+    The original upload name and absolute path never enter the artifact contract.
+    A fixed, validated fighter id determines the destination filename, making a
+    repeated call an atomic replacement rather than a source-name disclosure.
+    """
+
+    if source_path is None or not os.fspath(source_path).strip():
+        return None
+    if size < 64 or size > 2048:
+        raise ValueError("portrait size must be between 64 and 2048 pixels")
+
+    safe_fighter_id = _validate_safe_id(str(fighter_id), label="fighter_id")
+    source = Path(source_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Portrait image was not found: {source}")
+
+    destination_dir = Path(run_dir).expanduser().resolve() / "profiles"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / f"{safe_fighter_id}.webp"
+    temporary = destination_dir / f".{destination.name}.{uuid.uuid4().hex}.tmp.webp"
+    try:
+        try:
+            with Image.open(source) as uploaded:
+                normalized = ImageOps.exif_transpose(uploaded).convert("RGB")
+                portrait = ImageOps.fit(
+                    normalized,
+                    (size, size),
+                    method=Image.Resampling.LANCZOS,
+                    centering=(0.5, 0.4),
+                )
+                portrait.save(
+                    temporary,
+                    format="WEBP",
+                    quality=88,
+                    method=6,
+                )
+        except (UnidentifiedImageError, OSError) as exc:
+            raise ValueError("Файл портрета не является поддерживаемым изображением") from exc
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    return destination.relative_to(Path(run_dir).expanduser().resolve()).as_posix()
 
 
 def finalize_h264_video(
@@ -278,10 +336,17 @@ def finalize_h264_video(
         ]
     )
     if source is not None:
-        # Some broadcasts end their audio stream early. Pad silence to the
-        # video duration before -shortest so the annotated picture is never
-        # truncated to the shorter audio track.
-        arguments.extend(["-c:a", "aac", "-b:a", "160k", "-af", "apad", "-shortest"])
+        from .video import probe_video
+
+        # Infinite apad + -shortest can overshoot by hundreds of milliseconds
+        # depending on mux scheduling. Bound padding by the rendered VIDEO,
+        # not by source audio/container duration (which can be shorter/longer).
+        duration = probe_video(silent).duration_s
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError("Не удалось определить длительность видео для синхронизации звука")
+        duration_text = f"{duration:.9f}"
+        arguments.extend(["-c:a", "aac", "-b:a", "160k", "-af",
+                          f"apad=whole_dur={duration_text},atrim=end={duration_text}", "-t", duration_text])
     arguments.append(temporary)
 
     try:
@@ -405,5 +470,6 @@ __all__ = [
     "create_run_artifacts",
     "extract_event_clips",
     "finalize_h264_video",
+    "persist_fighter_portrait",
     "write_json_atomic",
 ]

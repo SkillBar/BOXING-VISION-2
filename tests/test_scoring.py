@@ -15,7 +15,9 @@ def _event(
     replay: bool = False,
 ) -> PunchEvent:
     defender = "fighter_b" if attacker == "fighter_a" else "fighter_a"
-    number = int("".join(character for character in event_id if character.isdigit()) or 1)
+    number = int(
+        "".join(character for character in event_id if character.isdigit()) or 1
+    )
     return PunchEvent(
         event_id=event_id,
         round=round_number,
@@ -56,7 +58,9 @@ def test_unclear_and_replay_events_do_not_affect_score() -> None:
     baseline = [_event("a1", "fighter_a", "likely_landed")]
     ignored = [
         _event("b2", "fighter_b", "unclear", confidence=1.0, impact=100),
-        _event("b3", "fighter_b", "likely_landed", confidence=1.0, impact=100, replay=True),
+        _event(
+            "b3", "fighter_b", "likely_landed", confidence=1.0, impact=100, replay=True
+        ),
     ]
 
     assert score_round(1, baseline) == score_round(1, baseline + ignored)
@@ -99,7 +103,7 @@ def test_confirmed_knockdown_overrides_leaders_dominance() -> None:
     assert "нокдаун" in score.reason
 
 
-def test_summary_is_json_ready_and_explicitly_unofficial() -> None:
+def test_summary_is_json_ready_and_uses_neutral_model_language() -> None:
     events = [
         _event("a1", "fighter_a", "likely_landed", round_number=1),
         _event("b2", "fighter_b", "missed", round_number=1),
@@ -115,7 +119,8 @@ def test_summary_is_json_ready_and_explicitly_unofficial() -> None:
     assert summary["winner_id"] == "fighter_a"
     assert summary["winner_name"] == "Красный"
     assert summary["fighters"]["fighter_b"]["attempts"] == 1
-    assert "Неофициальная" in summary["disclaimer"]
+    assert summary["disclaimer"] == "Оценка модели с указанием уверенности."
+    assert "эксперимент" not in summary["disclaimer"].lower()
     assert summary["weights"] == {
         "effective_landed": 0.70,
         "accuracy": 0.15,
@@ -123,3 +128,41 @@ def test_summary_is_json_ready_and_explicitly_unofficial() -> None:
         "pressure_proxy": 0.05,
     }
     assert score_rounds(events, scheduled_rounds=1)[0].round == 1
+
+
+def test_summary_exposes_applied_and_received_head_body_breakdowns() -> None:
+    landed_head = _event("a1", "fighter_a", "likely_landed")
+    blocked_body = _event("a2", "fighter_a", "blocked")
+    blocked_body.target = "body"
+    landed_unknown = _event("b3", "fighter_b", "likely_landed")
+    landed_unknown.target = "unknown"
+    ignored_replay = _event("b4", "fighter_b", "likely_landed", replay=True)
+    ignored_replay.target = "body"
+    ignored_rejected = _event("a5", "fighter_a", "likely_landed")
+    ignored_rejected.target = "body"
+    ignored_rejected.review_status = "rejected"
+
+    summary = build_fight_summary(
+        [
+            landed_head,
+            blocked_body,
+            landed_unknown,
+            ignored_replay,
+            ignored_rejected,
+        ],
+        scheduled_rounds=1,
+    )
+
+    fighter_a = summary["fighters"]["fighter_a"]
+    fighter_b = summary["fighters"]["fighter_b"]
+    assert fighter_a["landed_targets"] == {
+        "head": {"landed": 1, "thrown": 1},
+        "body": {"landed": 0, "thrown": 1},
+        "unknown": {"landed": 0, "thrown": 0},
+    }
+    assert fighter_a["received_landed_targets"] == {
+        "head": {"landed": 0, "thrown": 0},
+        "body": {"landed": 0, "thrown": 0},
+        "unknown": {"landed": 1, "thrown": 1},
+    }
+    assert fighter_b["received_landed_targets"] == fighter_a["landed_targets"]

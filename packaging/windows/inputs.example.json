@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x64",
+  "files": [
+    {"role":"ffmpeg","source":"inputs/ffmpeg.exe","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"https://ffmpeg.org/download.html","license":"REVIEW_SUPPLIED_BINARY_LICENSE_AND_SOURCE_OFFER","redistribution_approved":false},
+    {"role":"ffprobe","source":"inputs/ffprobe.exe","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"https://ffmpeg.org/download.html","license":"REVIEW_SUPPLIED_BINARY_LICENSE_AND_SOURCE_OFFER","redistribution_approved":false},
+    {"role":"detector","source":"inputs/yolox_tiny_8xb8-300e_humanart-6f3252f9.onnx","sha256":"ceb11c07298f95c50d7c5abeb906d03340c85f23aa79e3e66966e7fb6c307250","source_url":"https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_tiny_8xb8-300e_humanart-6f3252f9.zip","license":"REVIEW_CODE_WEIGHTS_AND_DATA_LICENSES_SEPARATELY","redistribution_approved":false},
+    {"role":"pose","source":"inputs/rtmpose-s_simcc-body7_pt-body7_420e-256x192-acd4a1ef_20230504.onnx","sha256":"9aeb635b83f86aea45cf45d85798f7eba1a162de8e0d721c44e54fe5eebaf47d","source_url":"https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-s_simcc-body7_pt-body7_420e-256x192-acd4a1ef_20230504.zip","license":"REVIEW_CODE_WEIGHTS_AND_DATA_LICENSES_SEPARATELY","redistribution_approved":false},
+    {"role":"sf_regular","source":"inputs/SF-Pro-Text-Regular.otf","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"https://developer.apple.com/fonts/","license":"PROVIDE_PERMISSION_FOR_THIS_FONT_BUILD","redistribution_approved":false},
+    {"role":"sf_medium","source":"inputs/SF-Pro-Text-Medium.otf","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"https://developer.apple.com/fonts/","license":"PROVIDE_PERMISSION_FOR_THIS_FONT_BUILD","redistribution_approved":false},
+    {"role":"sf_semibold","source":"inputs/SF-Pro-Text-Semibold.otf","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"https://developer.apple.com/fonts/","license":"PROVIDE_PERMISSION_FOR_THIS_FONT_BUILD","redistribution_approved":false},
+    {"role":"sf_bold","source":"inputs/SF-Pro-Text-Bold.otf","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"https://developer.apple.com/fonts/","license":"PROVIDE_PERMISSION_FOR_THIS_FONT_BUILD","redistribution_approved":false},
+    {"role":"druk_medium","source":"inputs/DrukCyr-Medium.ttf","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"PROVIDE_FONT_SOURCE","license":"PROVIDE_PERMISSION_FOR_THIS_FONT_BUILD","redistribution_approved":false},
+    {"role":"druk_bold","source":"inputs/DrukCyr-Bold.ttf","sha256":"REPLACE_WITH_THE_SUPPLIED_FILE_SHA256","source_url":"PROVIDE_FONT_SOURCE","license":"PROVIDE_PERMISSION_FOR_THIS_FONT_BUILD","redistribution_approved":false}
+  ]
+}

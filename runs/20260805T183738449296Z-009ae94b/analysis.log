@@ -1,2 +1,0 @@
-2026-08-05T18:37:38.449788+00:00 job=20260805T183738449296Z-009ae94b source=/Users/egor/Documents/ChatGPT/BOXING/samples/boxing_test_12s.mp4
-2026-08-05T18:37:38.470004+00:00 input={'path': '/Users/egor/Documents/ChatGPT/BOXING/samples/boxing_test_12s.mp4', 'duration_s': 12.0, 'width': 960, 'height': 528, 'fps': 25.0, 'frame_count': 300, 'video_codec': 'h264', 'has_audio': True, 'audio_codec': 'aac', 'rotation': 0, 'size_bytes': 3935080}

@@ -1,6 +1,0 @@
-2026-08-06T12:51:54.852796+00:00 job=20260806T125154851604Z-7478d9bd source_name=IMG_7084.MOV
-2026-08-06T12:51:54.934681+00:00 input={'path': 'IMG_7084.MOV', 'duration_s': 83.465, 'width': 1280, 'height': 720, 'fps': 59.97723596717187, 'frame_count': 5006, 'video_codec': 'h264', 'has_audio': True, 'audio_codec': 'aac', 'rotation': 0, 'size_bytes': 32139098}
-2026-08-06T12:51:59.018841+00:00 fighter anchors initialized from confirmation frame
-2026-08-06T12:52:28.630001+00:00 backend=rtmlib-rtmpose analysed_frames=835 observations=1670 replay_intervals=[]
-2026-08-06T12:52:28.757017+00:00 events=280 rounds=1
-2026-08-06T12:53:25.943387+00:00 completed processing_s=91.078

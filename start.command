@@ -6,12 +6,7 @@ cd "$PROJECT_DIR"
 export GRADIO_ANALYTICS_ENABLED="False"
 
 if [[ ! -x ".venv/bin/python" ]]; then
-  BUNDLED_PYTHON="/Users/egor/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
-  if [[ -x "$BUNDLED_PYTHON" ]]; then
-    "$BUNDLED_PYTHON" -m venv .venv
-  else
-    python3 -m venv .venv
-  fi
+  python3 -m venv .venv
 fi
 
 if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then

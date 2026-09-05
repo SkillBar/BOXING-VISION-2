@@ -174,7 +174,7 @@ def score_round(
     difference = index_a - index_b
     if abs(difference) < 3.0:
         points_a, points_b = 10, 10
-        reason = "Недостаточная разница экспериментальных индексов"
+        reason = "Недостаточная разница индексов модели"
     elif difference > 0:
         points_a, points_b = 10, 9
         reason = "Преимущество по взвешенным эффективным попаданиям"
@@ -276,7 +276,51 @@ def _event_counts(events: Sequence[PunchEvent], fighter_id: str) -> dict[str, ob
         "average_impact_proxy": round(average_impact, 1),
         "techniques": dict(sorted(techniques.items())),
         "hands": dict(sorted(hands.items())),
+        "landed_targets": _target_breakdown(events, fighter_id),
+        "received_landed_targets": _target_breakdown(
+            events,
+            fighter_id,
+            received=True,
+        ),
     }
+
+
+def _canonical_target(value: str) -> str:
+    normalized = value.lower().strip().replace("-", "_")
+    return normalized if normalized in {"head", "body"} else "unknown"
+
+
+def _target_breakdown(
+    events: Sequence[PunchEvent],
+    fighter_id: str,
+    *,
+    received: bool = False,
+) -> dict[str, dict[str, int]]:
+    """Return stable head/body/unknown landed-over-thrown counters.
+
+    ``received=False`` describes punches thrown by the fighter. ``received=True``
+    describes incoming punches whose ``defender_id`` is the fighter. Replays and
+    rejected/deleted events are excluded exactly as they are from headline totals.
+    """
+
+    identifier_field = "defender_id" if received else "attacker_id"
+    selected = [
+        event
+        for event in events
+        if getattr(event, identifier_field) == fighter_id
+        and not event.is_replay
+        and event.review_status.lower() not in {"rejected", "deleted"}
+    ]
+    breakdown = {
+        target: {"landed": 0, "thrown": 0}
+        for target in ("head", "body", "unknown")
+    }
+    for event in selected:
+        target = _canonical_target(event.target)
+        breakdown[target]["thrown"] += 1
+        if _canonical_outcome(event.outcome) == "likely_landed":
+            breakdown[target]["landed"] += 1
+    return breakdown
 
 
 def build_fight_summary(
@@ -288,7 +332,7 @@ def build_fight_summary(
     scheduled_rounds: int | None = None,
     confirmed_knockdowns_suffered: Mapping[int, Mapping[str, int]] | None = None,
 ) -> dict[str, object]:
-    """Build JSON-ready totals, cards and an explicitly unofficial winner."""
+    """Build JSON-ready totals, round cards and a confidence-labelled prediction."""
 
     event_list = sorted(events, key=lambda event: event.peak_ms)
     cards = score_rounds(
@@ -309,7 +353,7 @@ def build_fight_summary(
         winner_id = None
     score_confidences = [card.confidence for card in cards if card.confidence > 0]
     return {
-        "disclaimer": "Неофициальная экспериментальная AI-оценка; не является судейским решением.",
+        "disclaimer": "Оценка модели с указанием уверенности.",
         "fighter_a_id": fighter_a_id,
         "fighter_b_id": fighter_b_id,
         "fighters": {

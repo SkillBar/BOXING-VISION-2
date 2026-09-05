@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import cv2
 import numpy as np
+import pytest
 
 from boxing_vision.contracts import (
     BBox,
+    IdentityState,
     Keypoint,
     PoseObservation,
     PunchEvent,
+    RenderFrameContext,
+    ReviewStatus,
     RoundScore,
 )
-from boxing_vision.render import FrameRenderer, render_frame
+from boxing_vision.render import (
+    FIGHTER_COLOR_BY_ID,
+    FrameRenderer,
+    _fit_text,
+    _font,
+    render_frame,
+)
 
 
 def _pose(
@@ -181,3 +194,329 @@ def test_renderer_rejects_invalid_frames() -> None:
             pass
         else:
             raise AssertionError("invalid frame must raise ValueError")
+
+
+def test_compact_hud_preserves_action_area_and_none_disables_hud() -> None:
+    frame = np.full((360, 640, 3), 17, dtype=np.uint8)
+    summary = {
+        "metadata": {
+            "scheduled_rounds": 3,
+            "round_length_s": 180,
+            "rest_length_s": 60,
+        }
+    }
+
+    compact = FrameRenderer(hud_mode="compact").draw(
+        frame,
+        [],
+        [_event()],
+        summary,
+        timestamp_ms=1000,
+    )
+    without_hud = FrameRenderer(hud_mode="none").draw(
+        frame,
+        [],
+        [_event()],
+        summary,
+        timestamp_ms=1000,
+    )
+
+    assert np.count_nonzero(compact[:80] != frame[:80]) > 1000
+    assert np.array_equal(compact[100:], frame[100:]), (
+        "compact HUD must not reserve or darken a right-side panel"
+    )
+    assert np.array_equal(without_hud, frame)
+
+
+def test_compact_hud_attaches_separate_stat_cards_to_both_fighters() -> None:
+    frame = np.full((360, 640, 3), 17, dtype=np.uint8)
+    observations = [
+        _pose("fighter_a", BBox(270, 90, 410, 330)),
+        _pose("fighter_b", BBox(210, 80, 350, 332)),
+    ]
+    summary = {
+        "fighters": {
+            "fighter_a": {
+                "name": "Красный",
+                "attempts": 18,
+                "likely_landed": 8,
+                "accuracy": 0.44,
+            },
+            "fighter_b": {
+                "name": "Синий",
+                "attempts": 16,
+                "likely_landed": 7,
+                "accuracy": 0.43,
+            },
+        },
+        "metadata": {"scheduled_rounds": 3, "round_length_s": 180, "rest_length_s": 60},
+    }
+
+    rendered = FrameRenderer(hud_mode="compact").draw(
+        frame, observations, [_event()], summary, timestamp_ms=1000
+    )
+
+    assert np.count_nonzero(rendered[80:155, 40:255] != frame[80:155, 40:255]) > 1000
+    assert np.count_nonzero(rendered[75:150, 350:630] != frame[75:150, 350:630]) > 1000
+
+
+def test_compact_hud_card_slots_do_not_follow_moving_boxes() -> None:
+    frame = np.full((360, 640, 3), 17, dtype=np.uint8)
+    summary = {
+        "fighters": {
+            "fighter_a": {"name": "Красный", "attempts": 4, "likely_landed": 2},
+            "fighter_b": {"name": "Синий", "attempts": 5, "likely_landed": 3},
+        }
+    }
+    renderer = FrameRenderer(hud_mode="compact")
+    first = renderer.draw(
+        frame,
+        [
+            _pose("fighter_a", BBox(90, 100, 240, 330)),
+            _pose("fighter_b", BBox(390, 90, 560, 332)),
+        ],
+        summary=summary,
+        timestamp_ms=1000,
+    )
+    second = renderer.draw(
+        frame,
+        [
+            _pose("fighter_a", BBox(310, 90, 460, 330)),
+            _pose("fighter_b", BBox(170, 95, 340, 332)),
+        ],
+        summary=summary,
+        timestamp_ms=1033,
+    )
+
+    # The fixed card border and accent bars stay pixel-identical while only
+    # their leader endpoints and fighter boxes move.
+    assert np.array_equal(first[50:160, 10:14], second[50:160, 10:14])
+    assert np.array_equal(first[50:160, 626:630], second[50:160, 626:630])
+
+
+def test_compact_hud_drops_held_event_outside_active_fight() -> None:
+    frame = np.full((360, 640, 3), 17, dtype=np.uint8)
+    observations = [
+        _pose("fighter_a", BBox(90, 100, 240, 330)),
+        _pose("fighter_b", BBox(390, 90, 560, 332)),
+    ]
+    summary = {
+        "fighters": {
+            "fighter_a": {"name": "Красный"},
+            "fighter_b": {"name": "Синий"},
+        }
+    }
+    renderer = FrameRenderer(hud_mode="compact")
+
+    renderer.draw(
+        frame,
+        observations,
+        [_event()],
+        summary,
+        frame_context=RenderFrameContext(timestamp_ms=1000),
+    )
+    assert renderer._held_events
+
+    renderer.draw(
+        frame,
+        observations,
+        [],
+        summary,
+        frame_context=RenderFrameContext(
+            timestamp_ms=1200,
+            scene_state="BREAK",
+        ),
+    )
+
+    assert renderer._held_events == {}
+
+
+def test_fighter_colors_are_fixed_when_b_is_drawn_before_a() -> None:
+    frame = np.zeros((300, 640, 3), dtype=np.uint8)
+    observations = [
+        _pose("fighter_b", BBox(330, 70, 560, 280)),
+        _pose("fighter_a", BBox(30, 70, 260, 280)),
+    ]
+
+    rendered = FrameRenderer(hud_mode="none").draw(frame, observations)
+
+    for fighter_id in ("fighter_a", "fighter_b"):
+        color = np.asarray(FIGHTER_COLOR_BY_ID[fighter_id], dtype=np.uint8)
+        assert np.count_nonzero(np.all(rendered == color, axis=2)) > 100
+
+
+class RecordingRenderer(FrameRenderer):
+    def _apply_text(self, image, operations):
+        self.text_operations = list(operations)
+        return image
+
+
+@pytest.mark.parametrize(
+    "quality",
+    [
+        None,
+        {"identity_verified_coverage": 0.89},
+        {"identity_verified_coverage": 1.0, "identity_swap_suspected": True},
+        {"identity_verified_coverage": 1.0, "required_review_count": 1},
+    ],
+)
+def test_direct_renderer_round_score_argument_cannot_bypass_result_gate(quality):
+    renderer = RecordingRenderer(hud_mode="technical")
+    summary = {
+        "winner_id": "fighter_a",
+        "round_scores": [{"round": 1, "fighter_a_points": 10, "fighter_b_points": 8}],
+    }
+    if quality is not None:
+        summary["quality"] = quality
+    score = RoundScore(1, 10, 8, 80.0, 50.0, 0.9, "test")
+    renderer.draw(
+        np.zeros((720, 1280, 3), np.uint8), [], summary=summary, round_scores=[score]
+    )
+    assert not any(
+        "10 — 8" in item[1] or "Уверенность счёта" in item[1]
+        for item in renderer.text_operations
+    )
+    assert summary["winner_id"] == "fighter_a"
+
+
+def test_direct_renderer_shows_round_points_only_after_quality_pass():
+    renderer = RecordingRenderer(hud_mode="technical")
+    summary = {
+        "quality": {
+            "identity_verified_coverage": 0.99,
+            "required_review_count": 0,
+            "identity_swap_suspected": False,
+        }
+    }
+    score = RoundScore(1, 10, 8, 80.0, 50.0, 0.9, "test")
+    renderer.draw(
+        np.zeros((720, 1280, 3), np.uint8), [], summary=summary, round_scores=[score]
+    )
+    assert any("10 — 8" in item[1] for item in renderer.text_operations)
+
+
+@pytest.mark.parametrize("scene", ["BREAK", "REPLAY", "NON_FIGHT", "UNCERTAIN"])
+def test_frame_context_suppresses_stale_active_pose_overlays(scene):
+    frame = np.zeros((360, 640, 3), np.uint8)
+    poses = [
+        _pose("fighter_a", BBox(40, 60, 220, 340)),
+        _pose("fighter_b", BBox(360, 60, 550, 340)),
+    ]
+    renderer = FrameRenderer(hud_mode="none")
+    renderer.draw(frame, poses, timestamp_ms=1000)
+    output = renderer.draw(
+        frame,
+        poses,
+        [_event()],
+        frame_context=RenderFrameContext(1100, scene_state=scene),
+    )
+    assert np.array_equal(output, frame)
+    assert not renderer._trails
+
+
+def test_explicit_unknown_clears_old_connector_event_and_trails_immediately():
+    frame = np.zeros((360, 640, 3), np.uint8)
+    pose = _pose("fighter_a", BBox(220, 80, 360, 340))
+    summary = {"fighters": {"fighter_a": {"name": "A"}}}
+    renderer = FrameRenderer(hud_mode="compact")
+    renderer.draw(frame, [pose], [_event()], summary, timestamp_ms=1000)
+    assert renderer._leader_points
+    unknown = replace(
+        pose,
+        identity_state=IdentityState.UNKNOWN,
+        review_status=ReviewStatus.NEEDS_REVIEW,
+    )
+    renderer.draw(frame, [unknown], summary=summary, timestamp_ms=1100)
+    assert not renderer._leader_points
+    assert not renderer._held_events
+    assert not renderer._trails
+
+
+def test_context_shot_change_resets_without_cut_flag_and_rejects_prior_shot():
+    frame = np.zeros((360, 640, 3), np.uint8)
+    pose = _pose("fighter_a", BBox(40, 60, 220, 340))
+    renderer = FrameRenderer(hud_mode="none")
+    renderer.draw(frame, [pose], frame_context=RenderFrameContext(1000, shot_id=0))
+    output = renderer.draw(
+        frame, [pose], frame_context=RenderFrameContext(1100, shot_id=1)
+    )
+    assert np.array_equal(output, frame)
+
+
+def test_bbox_ema_is_temporal_and_resets_on_source_change():
+    renderer = FrameRenderer(hud_mode="compact")
+    first = replace(_pose("fighter_a", BBox(100, 30, 200, 300)), source_track_id=1)
+    moved = replace(
+        first, bbox=BBox(120, 30, 220, 300), detector_bbox=BBox(120, 30, 220, 300)
+    )
+    renderer._smooth_observation(first, 1000)
+    smooth = renderer._smooth_observation(moved, 1033)
+    assert 100 < smooth.bbox.x1 < 120
+    assert moved.bbox.x1 == 120
+    changed = renderer._smooth_observation(replace(moved, source_track_id=2), 1066)
+    assert changed.bbox.x1 == 120
+
+
+def test_clinch_hides_connector_even_if_line_does_not_intersect(monkeypatch):
+    renderer = FrameRenderer(hud_mode="compact")
+    frame = np.zeros((360, 640, 3), np.uint8)
+    a = _pose("fighter_a", BBox(260, 90, 410, 330))
+    b = _pose("fighter_b", BBox(280, 90, 430, 330))
+    monkeypatch.setattr(
+        renderer, "_polyline_intersects_observation", lambda *args: False
+    )
+    calls = []
+    monkeypatch.setattr(cv2, "polylines", lambda *args, **kwargs: calls.append(args))
+    renderer._draw_fighter_card(frame, "fighter_a", a, b, [], {}, 1000, [])
+    assert calls == []
+
+
+def test_compact_cards_fixed_for_300_frames_and_leader_jitter_below_three_pixels():
+    renderer = RecordingRenderer(hud_mode="compact")
+    frame = np.zeros((360, 640, 3), np.uint8)
+    summary = {"fighters": {"fighter_a": {"name": "A"}, "fighter_b": {"name": "B"}}}
+    coordinates, anchors = [], []
+    for index in range(300):
+        timestamp = index * 33
+        jitter = 6.0 if index % 2 else -6.0
+        pose = replace(
+            _pose("fighter_a", BBox(230, 90, 360, 330), offset_x=jitter),
+            timestamp_ms=timestamp,
+        )
+        renderer.draw(frame, [pose], summary=summary, timestamp_ms=timestamp)
+        coordinates.append(
+            tuple(item[0] for item in renderer.text_operations if item[1] in {"A", "B"})
+        )
+        anchors.append(renderer._leader_points["fighter_a"])
+    assert len(set(coordinates)) == 1
+    stable = np.array(anchors[20:])
+    assert float(np.sqrt(np.mean((stable - stable.mean(axis=0)) ** 2))) <= 3.0
+
+
+def test_long_cyrillic_name_fits_fixed_card_width_without_small_font():
+    name = "Александр Владимирович Оченьдлиннаяфамилия"
+    fitted = _fit_text(name, 166, 15, True)
+    assert fitted.endswith("…")
+    assert _font(15, True).getlength(fitted) <= 166
+
+
+def test_target_class_does_not_invent_precise_image_contact_point(monkeypatch):
+    renderer = FrameRenderer(hud_mode="compact")
+    frame = np.zeros((360, 640, 3), np.uint8)
+    b = _pose("fighter_b", BBox(360, 60, 550, 340))
+    circles = []
+    original = cv2.circle
+    monkeypatch.setattr(
+        cv2,
+        "circle",
+        lambda *args, **kwargs: circles.append(args) or original(*args, **kwargs),
+    )
+    renderer._draw_selected_contact(frame, {"fighter_b": b}, [_event()], 1000)
+    assert circles == []
+    event = _event()
+    event.evidence = {
+        "contact_point_image_norm": {"x": 0.7, "y": 0.25},
+        "contact_point_image_confidence": 0.9,
+    }
+    renderer._draw_selected_contact(frame, {"fighter_b": b}, [event], 1000)
+    assert len(circles) == 4

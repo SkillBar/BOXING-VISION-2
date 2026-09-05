@@ -1,0 +1,38 @@
+{
+  "version": 3,
+  "base": "body-map-v3-base.png",
+  "head_mask": "body-map-v3-head.png",
+  "body_mask": "body-map-v3-body.png",
+  "canvas_size": [
+    1024,
+    1536
+  ],
+  "coordinate_space": "defender_front_canonical_v1",
+  "viewport_crop": {
+    "x": 0.18,
+    "y": 0,
+    "width": 0.64,
+    "height": 0.72
+  },
+  "source": "exec-37c6cd26-8058-4a3d-98fd-9de9d60e21ad.png",
+  "generator": "built-in ImageGen",
+  "registration_error_px": 0,
+  "alpha_min": 0,
+  "alpha_max": 255,
+  "head_pixels": 19708,
+  "body_pixels": 93480,
+  "zones": {
+    "head": {
+      "default_point": {
+        "x": 0.5,
+        "y": 0.1
+      }
+    },
+    "body": {
+      "default_point": {
+        "x": 0.5,
+        "y": 0.3
+      }
+    }
+  }
+}

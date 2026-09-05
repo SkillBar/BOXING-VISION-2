@@ -16,7 +16,22 @@ from dataclasses import dataclass
 import numpy as np
 
 from .config import AnalysisConfig
-from .contracts import Keypoint, PoseObservation, PunchEvent
+from .contracts import (
+    IdentityState,
+    Keypoint,
+    PoseObservation,
+    PunchEvent,
+    RawPunchProposal,
+    ReviewStatus,
+    SceneState,
+)
+from .temporal import (
+    HysteresisConfig,
+    HysteresisPunchProposer,
+    TemporalFeature,
+    TemporalProposal,
+    TemporalProposalProvider,
+)
 
 OUTCOMES = {"likely_landed", "blocked", "missed", "unclear"}
 TECHNIQUES = {"straight", "jab", "cross", "hook", "uppercut", "unknown"}
@@ -38,10 +53,16 @@ class PunchDetectionConfig:
     miss_distance: float = 1.25
     combo_window_ms: int = 1_400
     counter_window_ms: int = 950
+    max_sample_gap_ms: int = 350
+    min_return_ratio: float = 0.30
+    contact_peak_tolerance_ms: int = 180
+    contact_min_visibility: float = 0.45
+    temporal_nms_iou: float = 0.45
     fight_start_s: float = 0.0
     round_length_s: int = 180
     rest_length_s: int = 60
     scheduled_rounds: int = 12
+    timing_mode: str = "scheduled"
 
     @classmethod
     def from_analysis_config(cls, config: AnalysisConfig) -> PunchDetectionConfig:
@@ -52,6 +73,7 @@ class PunchDetectionConfig:
             round_length_s=config.round_length_s,
             rest_length_s=int(getattr(config, "rest_length_s", 60)),
             scheduled_rounds=config.scheduled_rounds,
+            timing_mode=getattr(config, "timing_mode", "scheduled"),
         )
 
 
@@ -72,6 +94,19 @@ class _MotionSample:
     outward_speed: float = 0.0
     target_speed: float = 0.0
     acceleration: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class _ContactEvidence:
+    target: str
+    outcome: str
+    target_distance: float
+    block_distance: float
+    defender_visibility: float
+    timestamp_ms: int | None = None
+    point_x: float | None = None
+    point_y: float | None = None
+    point_confidence: float = 0.0
 
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -201,7 +236,10 @@ def _build_motion_series(
         previous = samples[index - 1]
         current = samples[index]
         elapsed_s = (current.observation.timestamp_ms - previous.observation.timestamp_ms) / 1000.0
-        if elapsed_s <= 0 or elapsed_s > 0.35 or current.observation.is_scene_cut:
+        if (elapsed_s <= 0 or elapsed_s > 0.35 or current.observation.is_scene_cut
+                or current.observation.shot_id != previous.observation.shot_id
+                or (current.observation.segment_id is not None
+                    and current.observation.segment_id != previous.observation.segment_id)):
             continue
         delta = current.relative_wrist - previous.relative_wrist
         current.speed = float(np.linalg.norm(delta)) / elapsed_s
@@ -218,6 +256,115 @@ def _build_motion_series(
                 current.target_speed = float(np.dot(wrist_delta_pixels / current.torso_scale, direction / direction_norm)) / elapsed_s
         current.acceleration = abs(current.speed - previous.speed) / elapsed_s
     return samples
+
+
+def _temporal_features(
+    samples: Sequence[_MotionSample],
+    config: PunchDetectionConfig,
+) -> list[TemporalFeature]:
+    """Convert pose samples into the stable temporal-model feature contract."""
+
+    features: list[TemporalFeature] = []
+    previous_timestamp: int | None = None
+    previous_sample: _MotionSample | None = None
+    for sample in samples:
+        timestamp_ms = sample.observation.timestamp_ms
+        gap_ms = timestamp_ms - previous_timestamp if previous_timestamp is not None else 0
+        features.append(
+            TemporalFeature(
+                timestamp_ms=timestamp_ms,
+                extension=sample.extension,
+                wrist_x=float(sample.relative_wrist[0]),
+                wrist_y=float(sample.relative_wrist[1]),
+                speed=sample.speed,
+                outward_speed=sample.outward_speed,
+                target_speed=sample.target_speed,
+                elbow_angle=sample.elbow_angle,
+                visibility=sample.visibility,
+                is_boundary=(
+                    sample.observation.is_scene_cut
+                    or previous_sample is not None
+                    and sample.observation.segment_id is not None
+                    and sample.observation.segment_id != previous_sample.observation.segment_id
+                    or previous_sample is not None
+                    and sample.observation.shot_id
+                    != previous_sample.observation.shot_id
+                    or previous_timestamp is not None
+                    and (gap_ms <= 0 or gap_ms > config.max_sample_gap_ms)
+                ),
+            )
+        )
+        previous_timestamp = timestamp_ms
+        previous_sample = sample
+    return features
+
+
+def _confirmed_active_pair(
+    observations: Sequence[PoseObservation],
+) -> list[PoseObservation]:
+    """Keep only timestamps with two confirmed canonical identities.
+
+    This is the final safety gate before temporal proposal generation.  A
+    referee, an uncertain reacquisition, a replay, or a break can therefore
+    never create a punch event even if its wrist trajectory looks plausible.
+    """
+
+    expected_states = {
+        "fighter_a": IdentityState.FIGHTER_A,
+        "fighter_b": IdentityState.FIGHTER_B,
+    }
+    by_timestamp: dict[int, dict[str, PoseObservation]] = defaultdict(dict)
+    for observation in observations:
+        if not isinstance(observation, PoseObservation):
+            # DisplayTrack predictions must never become analytical evidence.
+            continue
+        expected = expected_states.get(observation.fighter_id)
+        if expected is None or observation.identity_state != expected:
+            continue
+        if float(observation.identity_confidence or 0.0) < 0.55:
+            continue
+        if (
+            observation.identity_margin is not None
+            and float(observation.identity_margin) < 0.12
+        ):
+            continue
+        if observation.scene_state != SceneState.ACTIVE_FIGHT:
+            continue
+        if observation.review_status in {
+            ReviewStatus.NEEDS_REVIEW,
+            ReviewStatus.REJECTED,
+        }:
+            continue
+        by_timestamp[observation.timestamp_ms][observation.fighter_id] = observation
+
+    confirmed: list[PoseObservation] = []
+    for timestamp_ms in sorted(by_timestamp):
+        pair = by_timestamp[timestamp_ms]
+        if set(pair) != set(expected_states):
+            continue
+        confirmed.extend((pair["fighter_a"], pair["fighter_b"]))
+    return confirmed
+
+
+def _temporal_proposals(
+    samples: Sequence[_MotionSample],
+    config: PunchDetectionConfig,
+    provider: TemporalProposalProvider | None,
+) -> list[TemporalProposal]:
+    proposer = provider or HysteresisPunchProposer()
+    return proposer.propose(
+        _temporal_features(samples, config),
+        HysteresisConfig(
+            min_speed=config.min_wrist_speed,
+            min_directional_speed=config.min_outward_speed,
+            min_reach_gain=config.min_reach_gain,
+            min_duration_ms=config.min_duration_ms,
+            max_duration_ms=config.max_duration_ms,
+            refractory_ms=config.refractory_ms,
+            max_gap_ms=config.max_sample_gap_ms,
+            min_return_ratio=config.min_return_ratio,
+        ),
+    )
 
 
 def _candidate_peaks(samples: Sequence[_MotionSample], config: PunchDetectionConfig) -> list[int]:
@@ -318,70 +465,137 @@ def _minimum_distance(wrist: Keypoint, points: Sequence[Keypoint], scale: float)
     return min(_distance(wrist, point) for point in points) / max(1.0, scale)
 
 
+def _nearest_distance_point(
+    wrist: Keypoint,
+    points: Sequence[Keypoint],
+    scale: float,
+) -> tuple[float, Keypoint | None]:
+    if not points:
+        return math.inf, None
+    nearest = min(points, key=lambda point: _distance(wrist, point))
+    return _distance(wrist, nearest) / max(1.0, scale), nearest
+
+
 def _contact_geometry(
     window: Sequence[_MotionSample],
     config: PunchDetectionConfig,
-) -> tuple[str, str, float, float, float]:
-    best_target = "unknown"
-    best_target_distance = math.inf
-    best_block_distance = math.inf
-    defender_visibility: list[float] = []
-    for sample in window:
+    *,
+    peak_timestamp_ms: int | None = None,
+) -> _ContactEvidence:
+    """Find conservative contact evidence close to maximum extension.
+
+    Proximity during the wind-up or late return is not contact.  Only samples
+    close to the temporal peak participate, and guard interception is evaluated
+    at the same sample as the closest target point.
+    """
+
+    if not window:
+        return _ContactEvidence("unknown", "unclear", math.inf, math.inf, 0.0)
+    reference_timestamp = (
+        int(peak_timestamp_ms)
+        if peak_timestamp_ms is not None
+        else max(window, key=lambda sample: sample.extension).observation.timestamp_ms
+    )
+    eligible = [
+        sample
+        for sample in window
+        if abs(sample.observation.timestamp_ms - reference_timestamp)
+        <= config.contact_peak_tolerance_ms
+    ]
+    best: tuple[float, str, float, float, _MotionSample, Keypoint] | None = None
+    for sample in eligible:
         defender = sample.defender
         if defender is None:
             continue
         defender_scale = _torso_scale(defender, config.pose_score_threshold)
-        head_distance = _minimum_distance(
+        head_distance, head_point = _nearest_distance_point(
             sample.wrist,
             _head_points(defender, config.pose_score_threshold),
             defender_scale,
         )
-        body_distance = _minimum_distance(
+        body_distance, body_point = _nearest_distance_point(
             sample.wrist,
             _body_points(defender, config.pose_score_threshold),
             defender_scale,
         )
-        if head_distance < best_target_distance and head_distance <= body_distance * 1.05:
-            best_target = "head"
-            best_target_distance = head_distance
-        if body_distance < best_target_distance:
-            best_target = "body"
-            best_target_distance = body_distance
+        if head_distance <= body_distance * 1.05:
+            target, target_distance, target_point = "head", head_distance, head_point
+        else:
+            target, target_distance, target_point = "body", body_distance, body_point
+        if target_point is None:
+            continue
         guard_points = [
             point
             for name in ("left_wrist", "right_wrist", "left_elbow", "right_elbow")
             if (point := _point(defender, name, config.pose_score_threshold)) is not None
         ]
-        best_block_distance = min(
-            best_block_distance,
-            _minimum_distance(sample.wrist, guard_points, defender_scale),
-        )
+        block_distance = _minimum_distance(sample.wrist, guard_points, defender_scale)
         visible_scores = [point.score for point in _head_points(defender, config.pose_score_threshold)]
         visible_scores.extend(point.score for point in _body_points(defender, config.pose_score_threshold))
-        if visible_scores:
-            defender_visibility.append(float(np.mean(visible_scores)) * defender.track_confidence)
+        visibility = (
+            float(np.mean(visible_scores)) * defender.track_confidence
+            if visible_scores
+            else 0.0
+        )
+        candidate = (
+            target_distance,
+            target,
+            block_distance,
+            visibility,
+            sample,
+            target_point,
+        )
+        if best is None or candidate[0] < best[0]:
+            best = candidate
 
-    visibility = float(np.mean(defender_visibility)) if defender_visibility else 0.0
-    if not math.isfinite(best_target_distance):
-        return "unknown", "unclear", math.inf, math.inf, visibility
+    if best is None:
+        return _ContactEvidence("unknown", "unclear", math.inf, math.inf, 0.0)
+    target_distance, target, block_distance, visibility, sample, target_point = best
     guard_intercepts = (
-        best_block_distance <= config.block_distance
-        and best_block_distance <= best_target_distance + 0.22
+        block_distance <= config.block_distance
+        and block_distance <= target_distance + 0.22
     )
-    if best_target_distance <= config.contact_distance:
+    if target_distance <= config.contact_distance and visibility >= config.contact_min_visibility:
         if guard_intercepts:
             outcome = "blocked"
         else:
             outcome = "likely_landed"
-    elif guard_intercepts and best_target_distance <= config.miss_distance:
+    elif guard_intercepts and target_distance <= config.miss_distance:
         outcome = "blocked"
-    elif best_target_distance >= config.miss_distance and visibility >= 0.50:
+    elif target_distance >= config.miss_distance and visibility >= 0.50:
         outcome = "missed"
     else:
         outcome = "unclear"
-    if best_target_distance > config.miss_distance:
-        best_target = "unknown"
-    return best_target, outcome, best_target_distance, best_block_distance, visibility
+    if target_distance > config.miss_distance:
+        target = "unknown"
+
+    # A point is exported only when there is strong, visible proximity near the
+    # temporal peak.  It is supporting evidence, never a claim of physical
+    # force or a ground-truth collision.
+    point_confidence = 0.0
+    point_x: float | None = None
+    point_y: float | None = None
+    timestamp_ms: int | None = None
+    if target_distance <= config.contact_distance and visibility >= config.contact_min_visibility:
+        point_confidence = _clamp(
+            (1.0 - target_distance / max(config.contact_distance, 1e-6))
+            * visibility
+            * (0.82 if guard_intercepts else 1.0)
+        )
+        point_x = target_point.x
+        point_y = target_point.y
+        timestamp_ms = sample.observation.timestamp_ms
+    return _ContactEvidence(
+        target=target,
+        outcome=outcome,
+        target_distance=target_distance,
+        block_distance=block_distance,
+        defender_visibility=visibility,
+        timestamp_ms=timestamp_ms,
+        point_x=point_x,
+        point_y=point_y,
+        point_confidence=point_confidence,
+    )
 
 
 def _known_straight_label(hand: str, stance: str | None) -> str:
@@ -412,6 +626,8 @@ def _classify_technique(
 
 
 def _round_number(timestamp_ms: int, config: PunchDetectionConfig) -> int | None:
+    if config.timing_mode == "continuous":
+        return 1 if timestamp_ms >= config.fight_start_s * 1000 else None
     elapsed_ms = max(0, timestamp_ms - int(config.fight_start_s * 1000))
     cycle_ms = max(1, (config.round_length_s + config.rest_length_s) * 1000)
     if elapsed_ms % cycle_ms >= config.round_length_s * 1000:
@@ -442,29 +658,52 @@ def _impact_proxy(
 
 def _make_event(
     samples: Sequence[_MotionSample],
-    start_index: int,
-    peak_index: int,
-    end_index: int,
+    proposal: TemporalProposal,
     *,
     attacker_id: str,
     defender_id: str,
     stance: str | None,
     config: PunchDetectionConfig,
 ) -> PunchEvent | None:
+    start_index = proposal.start_index
+    peak_index = proposal.peak_index
+    end_index = proposal.end_index
+    if not (
+        0 <= start_index < peak_index < end_index < len(samples)
+        and all(
+            math.isfinite(value)
+            for value in (
+                proposal.score,
+                proposal.return_ratio,
+                proposal.reach_gain,
+                proposal.excursion_gain,
+                proposal.target_progress,
+            )
+        )
+    ):
+        return None
     start, peak, end = samples[start_index], samples[peak_index], samples[end_index]
     duration_ms = end.observation.timestamp_ms - start.observation.timestamp_ms
     if duration_ms < config.min_duration_ms or duration_ms > config.max_duration_ms:
         return None
-    reach_gain = peak.extension - start.extension
-    target_progress = max(
-        sample.target_speed for sample in samples[max(start_index + 1, 0) : peak_index + 1]
-    ) if peak_index > start_index else 0.0
-    if reach_gain < config.min_reach_gain and target_progress < config.min_outward_speed * 1.4:
+    reach_gain = proposal.reach_gain
+    target_progress = proposal.target_progress
+    if (
+        reach_gain < config.min_reach_gain
+        and proposal.excursion_gain < config.min_reach_gain
+        and target_progress < config.min_reach_gain * 1.35
+    ):
         return None
     window = samples[start_index : end_index + 1]
-    target, outcome, target_distance, block_distance, defender_visibility = _contact_geometry(window, config)
-    peak_speed = max(sample.speed for sample in window)
-    peak_acceleration = max(sample.acceleration for sample in window)
+    contact = _contact_geometry(
+        window,
+        config,
+        peak_timestamp_ms=peak.observation.timestamp_ms,
+    )
+    outbound = samples[start_index : peak_index + 1]
+    peak_velocity_sample = max(outbound, key=lambda sample: sample.speed)
+    peak_speed = peak_velocity_sample.speed
+    peak_acceleration = max(sample.acceleration for sample in outbound)
     motion_confidence = _clamp((peak_speed - config.min_wrist_speed * 0.72) / 2.3)
     reach_confidence = _clamp(max(reach_gain, target_progress * 0.16) / 0.55)
     pose_confidence = float(np.mean([sample.visibility for sample in window]))
@@ -473,27 +712,96 @@ def _make_event(
         "blocked": 0.78,
         "missed": 0.70,
         "unclear": 0.38,
-    }[outcome]
-    if outcome != "unclear":
-        geometry_confidence *= 0.55 + 0.45 * defender_visibility
+    }[contact.outcome]
+    if contact.outcome != "unclear":
+        geometry_confidence *= 0.55 + 0.45 * contact.defender_visibility
     confidence = _clamp(
-        0.34 * motion_confidence
-        + 0.24 * reach_confidence
-        + 0.24 * pose_confidence
-        + 0.18 * geometry_confidence
+        0.29 * motion_confidence
+        + 0.21 * reach_confidence
+        + 0.20 * pose_confidence
+        + 0.17 * geometry_confidence
+        + 0.13 * proposal.score
     )
     if confidence < config.event_confidence_threshold:
         return None
     technique = _classify_technique(start, peak, stance=stance)
-    impact = _impact_proxy(peak_speed, peak_acceleration, max(0.0, reach_gain), pose_confidence, outcome)
+    impact = _impact_proxy(
+        peak_speed,
+        peak_acceleration,
+        max(0.0, reach_gain),
+        pose_confidence,
+        contact.outcome,
+    )
     evidence = {
         "peak_wrist_speed_torso_s": round(peak_speed, 4),
         "peak_acceleration_torso_s2": round(peak_acceleration, 4),
         "reach_gain_torso": round(reach_gain, 4),
-        "target_distance_torso": round(target_distance, 4) if math.isfinite(target_distance) else -1.0,
-        "guard_distance_torso": round(block_distance, 4) if math.isfinite(block_distance) else -1.0,
+        "wrist_excursion_torso": round(proposal.excursion_gain, 4),
+        "target_progress_torso": round(target_progress, 4),
+        "target_distance_torso": (
+            round(contact.target_distance, 4)
+            if math.isfinite(contact.target_distance)
+            else -1.0
+        ),
+        "guard_distance_torso": (
+            round(contact.block_distance, 4)
+            if math.isfinite(contact.block_distance)
+            else -1.0
+        ),
         "pose_visibility": round(pose_confidence, 4),
+        "candidate_duration_ms": float(duration_ms),
+        "velocity_peak_ms": float(peak_velocity_sample.observation.timestamp_ms),
+        "return_ratio": round(proposal.return_ratio, 4),
+        "outbound_samples": float(proposal.outbound_samples),
+        "temporal_confidence": round(proposal.score, 4),
     }
+    if contact.timestamp_ms is not None and contact.point_x is not None and contact.point_y is not None:
+        evidence.update(
+            {
+                "contact_timestamp_ms": float(contact.timestamp_ms),
+                "contact_point_x": round(contact.point_x, 2),
+                "contact_point_y": round(contact.point_y, 2),
+                "contact_point_confidence": round(contact.point_confidence, 4),
+            }
+        )
+    target_point_norm: dict[str, float] | None = None
+    target_uncertainty_radius: float | None = None
+    if (
+        contact.timestamp_ms is not None
+        and contact.point_x is not None
+        and contact.point_y is not None
+        and contact.point_confidence >= 0.60
+    ):
+        contact_sample = min(
+            window,
+            key=lambda item: abs(
+                item.observation.timestamp_ms - int(contact.timestamp_ms or 0)
+            ),
+        )
+        defender = contact_sample.defender
+        if defender is not None:
+            defender_bbox = defender.detector_bbox or defender.bbox
+            if defender_bbox.width > 1 and defender_bbox.height > 1:
+                target_point_norm = {
+                    "x": round(
+                        _clamp(
+                            (contact.point_x - defender_bbox.x1)
+                            / defender_bbox.width
+                        ),
+                        4,
+                    ),
+                    "y": round(
+                        _clamp(
+                            (contact.point_y - defender_bbox.y1)
+                            / defender_bbox.height
+                        ),
+                        4,
+                    ),
+                }
+                target_uncertainty_radius = round(
+                    _clamp(0.18 - 0.12 * contact.point_confidence, 0.04, 0.18),
+                    4,
+                )
     round_number = _round_number(peak.observation.timestamp_ms, config)
     if round_number is None:
         return None
@@ -507,26 +815,73 @@ def _make_event(
         defender_id=defender_id,
         hand=peak.hand,
         technique=technique if technique in TECHNIQUES else "unknown",
-        target=target if target in TARGETS else "unknown",
-        outcome=outcome if outcome in OUTCOMES else "unclear",
+        target=contact.target if contact.target in TARGETS else "unknown",
+        outcome=contact.outcome if contact.outcome in OUTCOMES else "unclear",
         confidence=round(confidence, 4),
         impact_proxy_0_100=impact,
         evidence=evidence,
+        proposal_confidence=round(proposal.score, 4),
+        classification_confidence=round(
+            min(0.88, 0.42 + 0.34 * pose_confidence)
+            if technique != "unknown"
+            else 0.35,
+            4,
+        ),
+        outcome_confidence=round(_clamp(geometry_confidence), 4),
+        target_point_norm=target_point_norm,
+        target_point_confidence=(
+            round(contact.point_confidence, 4)
+            if target_point_norm is not None
+            else None
+        ),
+        target_uncertainty_radius=target_uncertainty_radius,
+        target_point_space="detector_bbox_v1",
+        target_point_source="pose_projection_v1" if target_point_norm is not None else None,
+        model_version="temporal-fsm-v2",
     )
 
 
-def _deduplicate(events: Sequence[PunchEvent], refractory_ms: int) -> list[PunchEvent]:
+def _interval_iou(first: PunchEvent, second: PunchEvent) -> float:
+    intersection = max(0, min(first.end_ms, second.end_ms) - max(first.start_ms, second.start_ms))
+    union = max(first.end_ms, second.end_ms) - min(first.start_ms, second.start_ms)
+    return intersection / union if union > 0 else 0.0
+
+
+def _temporal_nms(
+    events: Sequence[PunchEvent],
+    *,
+    refractory_ms: int,
+    interval_iou_threshold: float,
+) -> list[PunchEvent]:
+    """Suppress duplicate proposals without erasing alternating-hand combos."""
+
     selected: list[PunchEvent] = []
     quality = lambda event: event.confidence * (1.0 + event.impact_proxy_0_100 / 200.0)
     for event in sorted(events, key=lambda item: quality(item), reverse=True):
         duplicate = any(
             event.attacker_id == existing.attacker_id
-            and abs(event.peak_ms - existing.peak_ms) < refractory_ms
+            and (
+                event.hand == existing.hand
+                and (
+                    abs(event.peak_ms - existing.peak_ms) < refractory_ms
+                    or _interval_iou(event, existing) >= interval_iou_threshold
+                )
+            )
             for existing in selected
         )
         if not duplicate:
             selected.append(event)
     return sorted(selected, key=lambda item: (item.peak_ms, item.attacker_id))
+
+
+def _deduplicate(events: Sequence[PunchEvent], refractory_ms: int) -> list[PunchEvent]:
+    """Compatibility wrapper for callers of the former private helper."""
+
+    return _temporal_nms(
+        events,
+        refractory_ms=refractory_ms,
+        interval_iou_threshold=0.45,
+    )
 
 
 def annotate_exchanges(
@@ -653,31 +1008,105 @@ def _normalize_config(config: AnalysisConfig | PunchDetectionConfig | None) -> P
     return PunchDetectionConfig.from_analysis_config(config)
 
 
+def retain_motion_proposals(
+    frames: Iterable,
+    diagnostics: Sequence[Mapping],
+    config: AnalysisConfig | PunchDetectionConfig | None = None,
+    *,
+    events: Sequence[PunchEvent] = (),
+) -> list[RawPunchProposal]:
+    """Keep real per-person motion before the two-identity event gate.
+
+    These records are deliberately not PunchEvents: they cannot change a score,
+    produce a landed marker, or acquire an attacker label from a prediction.
+    OTHER instances and non-fight frames never enter this stream.
+    """
+    settings = _normalize_config(config)
+    details = {
+        (int(row["timestamp_ms"]), int(row.get("shot_id", 0)), str(row.get("source_track_id"))): row
+        for row in diagnostics if row.get("source_track_id") is not None
+    }
+    groups: dict[str, list[PoseObservation]] = defaultdict(list)
+    for frame in frames:
+        if str(frame.scene_state) != "ACTIVE_FIGHT":
+            continue
+        for pose in frame.poses:
+            if pose.source_track_id is None:
+                continue
+            row = details.get((frame.timestamp_ms, frame.shot_id, str(pose.source_track_id)), {})
+            if str(row.get("identity_state")) == "OTHER":
+                continue
+            segment = str(row.get("segment_id") or f"shot-{frame.shot_id}-track-{pose.source_track_id}")
+            groups[segment].append(PoseObservation(
+                frame_index=frame.frame_index, timestamp_ms=frame.timestamp_ms,
+                fighter_id="unassigned", bbox=pose.bbox, keypoints=pose.keypoints,
+                track_confidence=float(pose.pose_confidence if pose.pose_confidence is not None else pose.confidence),
+                identity_state=IdentityState.UNKNOWN, identity_confidence=0.0,
+                source_track_id=pose.source_track_id, segment_id=segment,
+                physical_track_id=row.get("physical_track_id"),
+                shot_id=frame.shot_id, is_scene_cut=frame.is_scene_cut,
+            ))
+    retained: list[RawPunchProposal] = []
+    for segment, observations in groups.items():
+        observations.sort(key=lambda item: item.timestamp_ms)
+        for hand in ("left", "right"):
+            samples = _build_motion_series(observations, {}, hand, settings)
+            for proposal in _temporal_proposals(samples, settings, None):
+                first, peak, last = (samples[index].observation for index in (
+                    proposal.start_index, proposal.peak_index, proposal.end_index))
+                row = details.get((peak.timestamp_ms, peak.shot_id, str(peak.source_track_id)), {})
+                role = row.get("selected_fighter_id")
+                if role not in {"fighter_a", "fighter_b"}:
+                    role = None
+                matching = [event for event in events if role == event.attacker_id
+                            and hand == event.hand and abs(event.peak_ms - peak.timestamp_ms) <= 300
+                            and event.start_ms <= last.timestamp_ms and event.end_ms >= first.timestamp_ms]
+                match = min(matching, key=lambda event: abs(event.peak_ms - peak.timestamp_ms)) if matching else None
+                retained.append(RawPunchProposal(
+                    proposal_id=f"motion-{segment}-{hand}-{peak.timestamp_ms}",
+                    shot_id=peak.shot_id, source_track_id=peak.source_track_id,
+                    segment_id=segment, physical_track_id=peak.physical_track_id,
+                    start_ms=first.timestamp_ms, peak_ms=peak.timestamp_ms,
+                    end_ms=last.timestamp_ms, hand=hand, confidence=float(proposal.score),
+                    fighter_id=role, status="resolved" if match else "needs_review",
+                    reason="confirmed_pair_event" if match else "pair_or_motion_quality_unresolved",
+                    resolved_event_id=match.event_id if match else None,
+                ))
+    return sorted(retained, key=lambda item: (item.peak_ms, item.segment_id, item.hand))
+
+
 def detect_punch_events(
     observations: Iterable[PoseObservation],
     config: AnalysisConfig | PunchDetectionConfig | None = None,
     *,
     stances: Mapping[str, str] | None = None,
     replay_intervals: Sequence[tuple[int, int]] | None = None,
+    proposal_provider: TemporalProposalProvider | None = None,
 ) -> list[PunchEvent]:
-    """Detect punch candidates from a flat stream of two-fighter poses."""
+    """Detect punch candidates from a flat stream of two-fighter poses.
+
+    ``proposal_provider`` is an optional temporal-model seam.  The default is a
+    deterministic per-hand hysteresis FSM; supplying another provider does not
+    change the returned :class:`PunchEvent` contract.
+    """
 
     detection_config = _normalize_config(config)
     ordered_observations = sorted(
-        observations,
+        _confirmed_active_pair(list(observations)),
         key=lambda observation: (observation.timestamp_ms, observation.fighter_id),
     )
     by_fighter: dict[str, list[PoseObservation]] = defaultdict(list)
     for observation in ordered_observations:
         by_fighter[observation.fighter_id].append(observation)
-    fighter_ids = sorted(by_fighter)
-    if len(fighter_ids) < 2:
+    fighter_ids = [
+        fighter_id
+        for fighter_id in ("fighter_a", "fighter_b")
+        if fighter_id in by_fighter
+    ]
+    if fighter_ids != ["fighter_a", "fighter_b"]:
         return []
 
     candidates: list[PunchEvent] = []
-    # The UI configures exactly two fighters.  If an upstream adapter happens
-    # to pass more tracks, the two longest tracks are the safest choice.
-    fighter_ids = sorted(fighter_ids, key=lambda fighter_id: len(by_fighter[fighter_id]), reverse=True)[:2]
     for attacker_id, defender_id in ((fighter_ids[0], fighter_ids[1]), (fighter_ids[1], fighter_ids[0])):
         defender_by_time = {
             observation.timestamp_ms: observation for observation in by_fighter[defender_id]
@@ -689,13 +1118,14 @@ def detect_punch_events(
                 hand,
                 detection_config,
             )
-            for peak_index in _candidate_peaks(samples, detection_config):
-                start_index, end_index = _event_window(samples, peak_index, detection_config)
+            for proposal in _temporal_proposals(
+                samples,
+                detection_config,
+                proposal_provider,
+            ):
                 event = _make_event(
                     samples,
-                    start_index,
-                    peak_index,
-                    end_index,
+                    proposal,
                     attacker_id=attacker_id,
                     defender_id=defender_id,
                     stance=(stances or {}).get(attacker_id),
@@ -704,7 +1134,11 @@ def detect_punch_events(
                 if event is not None:
                     candidates.append(event)
 
-    events = _deduplicate(candidates, detection_config.refractory_ms)
+    events = _temporal_nms(
+        candidates,
+        refractory_ms=detection_config.refractory_ms,
+        interval_iou_threshold=detection_config.temporal_nms_iou,
+    )
     intervals = list(replay_intervals or [])
     for index, event in enumerate(events, start=1):
         event.event_id = f"evt_{index:05d}"
@@ -725,9 +1159,11 @@ class PunchEventDetector:
         config: AnalysisConfig | PunchDetectionConfig | None = None,
         *,
         stances: Mapping[str, str] | None = None,
+        proposal_provider: TemporalProposalProvider | None = None,
     ) -> None:
         self.config = _normalize_config(config)
         self.stances = dict(stances or {})
+        self.proposal_provider = proposal_provider
         self._observations: list[PoseObservation] = []
         self._replay_intervals: list[tuple[int, int]] = []
 
@@ -751,6 +1187,7 @@ class PunchEventDetector:
             self.config,
             stances=self.stances,
             replay_intervals=self._replay_intervals,
+            proposal_provider=self.proposal_provider,
         )
         if clear:
             self.reset()
