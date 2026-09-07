@@ -44,7 +44,7 @@ jobs:
           python tools/private_build_transfer.py decrypt private-transfer/inputs.bvenc private-transfer/inputs.zip
           python tools/private_build_transfer.py unpack private-transfer/inputs.zip private-transfer/input
       - name: Build full application and installer
-        run: python tools/private_windows_build.py --input private-transfer/input --output private-transfer/result
+        run: python -m tools.private_windows_build --input private-transfer/input --output private-transfer/result
       - name: Preserve private startup diagnostics
         if: always()
         shell: pwsh

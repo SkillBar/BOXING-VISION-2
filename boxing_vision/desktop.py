@@ -521,7 +521,7 @@ def launch_desktop(
                                 and result.get("videoReady", 0) >= 2 and result.get("videoWidth", 0) > 0
                                 and not result.get("videoError")):
                             break
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - WebView engines expose different navigation exceptions.
                         result = {"error": str(exc)}
                     time.sleep(1)
                 result["pid"] = os.getpid()

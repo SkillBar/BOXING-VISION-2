@@ -15,3 +15,5 @@ def test_window_title_alone_does_not_pass_installed_app_qa():
     assert 'state.get("pid") != process_id' in script
     desktop = (root / "boxing_vision/desktop.py").read_text()
     assert "На Windows требуется Microsoft Edge WebView2 Runtime. Подробности" not in desktop
+    workflow = (root / ".github/workflows/private-windows-build.yml").read_text()
+    assert "python -m tools.private_windows_build " in workflow
