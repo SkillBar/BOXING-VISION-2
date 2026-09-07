@@ -89,13 +89,20 @@ def main() -> None:
 
     executable = builds[0] / "dist/BoxingVision/BoxingVision.exe"
     subprocess.run([str(executable), "--smoke-inference"], cwd=executable.parent, check=True, timeout=180)
-    process = subprocess.Popen([str(executable)], cwd=executable.parent)
+    from tools.windows_private_install_qa import install_and_capture
+
+    installed = install_and_capture(builds[0] / "installer/BoxingVision-Setup-x64.exe", executable,
+                                    output / "delivery/installer-steps")
+    subprocess.run([str(installed), "--check"], cwd=installed.parent, check=True, timeout=120)
+    # Setup's checked post-install action launches the actual installed program.
+    process_id = None
     qa = output / "delivery/screenshots"
     qa.mkdir()
     try:
         # WinForms class suffix depends on runtime; title is exact and unique in this isolated VM.
         window = Desktop(backend="win32").window(title="Boxing Vision", visible_only=True)
         window.wait("visible", timeout=120)
+        process_id = window.wrapper_object().process_id()
         time.sleep(15)
         for width, height in [(1440, 900), (1280, 800), (1024, 768)]:
             wrapper = window.wrapper_object()
@@ -109,7 +116,8 @@ def main() -> None:
         )
     finally:
         # No user work exists in this build VM; end only this application process tree.
-        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False)
+        if process_id is not None:
+            subprocess.run(["taskkill", "/PID", str(process_id), "/T", "/F"], check=False)
 
 
 if __name__ == "__main__":

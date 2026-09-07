@@ -10,6 +10,7 @@ if not (payload / "bundle-manifest.json").is_file():
     raise RuntimeError("Run tools.build_windows with validated explicit inputs")
 
 datas = [(str(root / "boxing_vision/static"), "boxing_vision/static")]
+datas.append((str(root / "THIRD_PARTY_NOTICES.md"), "notices"))
 binaries = []
 hiddenimports = []
 for package in ("gradio", "gradio_client", "rtmlib", "onnxruntime", "trackers", "supervision", "scenedetect", "webview"):
