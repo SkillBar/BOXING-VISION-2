@@ -22,6 +22,8 @@ for distribution in ("gradio", "gradio_client", "rtmlib", "onnxruntime", "tracke
     datas += copy_metadata(distribution, recursive=True)
 # Package WebView2 loader/.NET resources; Setup supplies the missing OS runtime.
 datas += collect_data_files("pythonnet")
+# safehttpx reads version.txt during import; metadata alone does not include it.
+datas += collect_data_files("safehttpx")
 for item in payload.rglob("*"):
     if item.is_file() and "prerequisites" not in item.relative_to(payload).parts:
         datas.append((str(item), str(item.parent.relative_to(payload))))

@@ -497,6 +497,38 @@ def launch_desktop(
             **window_geometry(list(webview_module.screens)),
         )
         window.events.closed += session.close
+        probe_path = os.environ.get("BOXING_VISION_STARTUP_PROBE")
+        if probe_path:
+            # CI must prove the WebView loaded the actual video, not merely find
+            # a window titled Boxing Vision (a startup error has that title too).
+            def probe_loaded_page() -> None:
+                import time
+
+                deadline = time.monotonic() + 120
+                result: dict[str, Any] = {}
+                while time.monotonic() < deadline:
+                    try:
+                        result = window.evaluate_js("""(() => {
+                            const v = document.querySelector('video');
+                            return { workspace: !!document.querySelector('#bv-result-workspace'),
+                                canvasCount: document.querySelectorAll('canvas').length,
+                                videoReady: v ? v.readyState : 0,
+                                videoWidth: v ? v.videoWidth : 0,
+                                videoHeight: v ? v.videoHeight : 0,
+                                videoError: v && v.error ? v.error.code : null };
+                        })()""") or {}
+                        if (result.get("workspace") and result.get("canvasCount", 0) > 0
+                                and result.get("videoReady", 0) >= 2 and result.get("videoWidth", 0) > 0
+                                and not result.get("videoError")):
+                            break
+                    except Exception as exc:
+                        result = {"error": str(exc)}
+                    time.sleep(1)
+                result["pid"] = os.getpid()
+                target = Path(probe_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            window.events.loaded += probe_loaded_page
         webview_module.start(
             gui="edgechromium" if sys.platform == "win32" else None,
             debug=False,
@@ -611,7 +643,7 @@ def main() -> int:
         return 0
     except (DesktopSetupError, ImportError, OSError, RuntimeError, ValueError) as exc:
         logging.getLogger("boxing_vision.desktop").exception("Desktop startup failed")
-        message = f"Boxing Vision не запущен: {exc}\nНа Windows требуется Microsoft Edge WebView2 Runtime. Подробности — в logs/desktop.log."
+        message = f"Boxing Vision не запущен: {exc}\nПодробности — в logs/desktop.log."
         # Build/preflight probes must never wait for a native dialog click.
         if not (args.check or args.smoke_inference):
             show_startup_error(message)

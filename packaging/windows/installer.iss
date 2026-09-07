@@ -8,7 +8,7 @@
 [Setup]
 AppId={{BB87A2FC-CF45-4C83-9E5D-4B4C2B9FB531}
 AppName=Boxing Vision
-AppVersion=0.1.0
+AppVersion=0.1.1
 DefaultDirName={localappdata}\Programs\BoxingVision
 DefaultGroupName=Boxing Vision
 UninstallDisplayIcon={app}\BoxingVision.exe

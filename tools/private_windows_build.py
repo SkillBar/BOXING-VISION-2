@@ -81,7 +81,7 @@ def main() -> None:
     builds = list((output / "build").glob("boxing-vision-build-*"))
     if len(builds) != 1:
         raise ValueError("Expected one isolated build")
-    shutil.copytree(builds[0] / "handoff/BoxingVision-Windows", output / "delivery/BoxingVision-Windows")
+    (output / "delivery").mkdir(parents=True)
     shutil.copyfile(builds[0] / "build-report.json", output / "delivery/build-report.json")
     # Capture the real native application, not a browser titlebar mockup.
     # These contain private footage and are returned only in encrypted delivery.
@@ -91,6 +91,8 @@ def main() -> None:
     subprocess.run([str(executable), "--smoke-inference"], cwd=executable.parent, check=True, timeout=180)
     from tools.windows_private_install_qa import install_and_capture
 
+    probe = output / "delivery/ui-startup-probe.json"
+    os.environ["BOXING_VISION_STARTUP_PROBE"] = str(probe)
     installed = install_and_capture(builds[0] / "installer/BoxingVision-Setup-x64.exe", executable,
                                     output / "delivery/installer-steps")
     subprocess.run([str(installed), "--check"], cwd=installed.parent, check=True, timeout=120)
@@ -102,8 +104,17 @@ def main() -> None:
         # WinForms class suffix depends on runtime; title is exact and unique in this isolated VM.
         window = Desktop(backend="win32").window(title="Boxing Vision", visible_only=True)
         window.wait("visible", timeout=120)
+        if window.wrapper_object().class_name() == "#32770":
+            raise RuntimeError("Startup displayed an error dialog, not the application")
         process_id = window.wrapper_object().process_id()
-        time.sleep(15)
+        deadline = time.monotonic() + 150
+        while not probe.is_file() and time.monotonic() < deadline:
+            time.sleep(1)
+        state = json.loads(probe.read_text(encoding="utf-8"))
+        if (state.get("pid") != process_id or not state.get("workspace")
+                or state.get("canvasCount", 0) < 1 or state.get("videoReady", 0) < 2
+                or state.get("videoWidth", 0) <= 0 or state.get("videoError")):
+            raise RuntimeError(f"Installed UI/video readiness failed: {state}")
         for width, height in [(1440, 900), (1280, 800), (1024, 768)]:
             wrapper = window.wrapper_object()
             wrapper.move_window(x=0, y=0, width=width, height=height, repaint=True)
@@ -118,6 +129,8 @@ def main() -> None:
         # No user work exists in this build VM; end only this application process tree.
         if process_id is not None:
             subprocess.run(["taskkill", "/PID", str(process_id), "/T", "/F"], check=False)
+    # No recipient installer is returned when actual installed UI/video QA fails.
+    shutil.copytree(builds[0] / "handoff/BoxingVision-Windows", output / "delivery/BoxingVision-Windows")
 
 
 if __name__ == "__main__":
