@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -32,6 +33,21 @@ from boxing_vision.pipeline import (
 from boxing_vision.video import VideoValidationError
 
 FFMPEG = shutil.which("ffmpeg")
+
+
+def test_observation_cache_sync_uses_writable_descriptor(tmp_path, monkeypatch):
+    sync = os.fsync
+    calls = []
+    def require_writable(fd):
+        # A zero-byte write fails on a read-only descriptor without changing data.
+        os.write(fd, b"")
+        calls.append(fd)
+        sync(fd)
+    monkeypatch.setattr(os, "fsync", require_writable)
+    destination = tmp_path / "empty.jsonl.gz"
+    _write_observation_cache(destination, [])
+    assert calls
+    assert _read_observation_cache(destination) == []
 
 
 def test_pipeline_wires_complete_adaptive_identity_policy() -> None:

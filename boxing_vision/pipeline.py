@@ -348,7 +348,8 @@ def _write_observation_cache(
                 handle.write("\n")
         # gzip.open closes and flushes the compressed stream before the atomic
         # rename. fsync makes the cache robust against an interrupted rebuild.
-        with temporary.open("rb") as handle:
+        # Windows _commit/FlushFileBuffers requires a writable handle.
+        with temporary.open("rb+") as handle:
             os.fsync(handle.fileno())
         os.replace(temporary, destination)
         return destination

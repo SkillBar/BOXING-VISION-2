@@ -294,7 +294,8 @@ def gradio_file_url(path: str | Path) -> str:
     """Return the URL shape used by Gradio 5's local-file endpoint."""
 
     resolved = Path(path).expanduser().resolve()
-    return "/gradio_api/file=" + quote(str(resolved), safe="/")
+    # Gradio URLs use forward slashes even when the filesystem is Windows.
+    return "/gradio_api/file=" + quote(resolved.as_posix(), safe="/")
 
 
 def _safe_run_asset(run_dir: Path | None, filename: object) -> str | None:

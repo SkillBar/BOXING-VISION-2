@@ -30,7 +30,7 @@ def _druk_assets(directory: Path) -> tuple[list[Path], str]:
             if not assets:
                 return [], ""
             continue
-        url = f"/gradio_api/file={quote(str(path), safe='/')}?v={modified_ns}"
+        url = f"/gradio_api/file={quote(path.as_posix(), safe='/')}?v={modified_ns}"
         assets.append(path)
         faces.append(
             '@font-face { font-family: "BV Druk Runtime"; '
@@ -62,7 +62,7 @@ def installed_display_font_assets(*, fonts_dir: Path | None = None) -> tuple[lis
         if candidate is None:
             continue
         path = candidate.resolve(strict=True)
-        url = f"/gradio_api/file={quote(str(path), safe='/')}?v={path.stat().st_mtime_ns}"
+        url = f"/gradio_api/file={quote(path.as_posix(), safe='/')}?v={path.stat().st_mtime_ns}"
         assets.append(path)
         format_name = "opentype" if path.suffix == ".otf" else "truetype"
         faces.append('@font-face { font-family: "BV SF Pro"; '
