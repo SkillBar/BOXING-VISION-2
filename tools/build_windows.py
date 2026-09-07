@@ -362,10 +362,11 @@ def main() -> int:
         # path; an unsigned or non-Microsoft installer never gets embedded.
         signature_env = dict(environment, BOXING_VISION_PREREQUISITE=str(safe_bundle_file(stage, runtime["path"])))
         subprocess.run([
-            "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-            ("$s = Get-AuthenticodeSignature -LiteralPath $env:BOXING_VISION_PREREQUISITE; "
+            shutil.which("pwsh") or "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+            ("$ErrorActionPreference = 'Stop'; "
+             "$s = Get-AuthenticodeSignature -LiteralPath $env:BOXING_VISION_PREREQUISITE; "
              "if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch '(?:^|, )O=Microsoft Corporation(?:,|$)') { exit 1 }"),
-        ], check=True, env=signature_env)
+        ], check=True, env=signature_env, timeout=120)
         subprocess.run(
             [
                 str(compiler),
