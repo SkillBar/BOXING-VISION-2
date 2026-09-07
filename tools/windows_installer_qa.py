@@ -106,7 +106,7 @@ def main() -> int:
                 report["reached_finish"] = True
                 finish.click()
                 break
-            forward = next((b for b in buttons if label(b) in {"Далее >", "Next >", "Установить", "Install"}), None)
+            forward = next((b for b in buttons if label(b) in {"Далее", "Далее >", "Next", "Next >", "Установить", "Install"}), None)
             if forward is None:
                 raise RuntimeError(f"No forward wizard action: {texts}")
             installing = label(forward) in {"Установить", "Install"}
