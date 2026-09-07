@@ -21,6 +21,35 @@ def no_real_message_boxes_in_unit_tests(monkeypatch):
     monkeypatch.setattr(desktop, "show_startup_error", lambda message: None)
 
 
+def test_frozen_inference_smoke_uses_real_backend_interface_without_accuracy_claim(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+
+    from boxing_vision import pose
+
+    released = []
+    class Capture:
+        def set(self, *_):
+            pass
+        def read(self):
+            return True, np.zeros((64, 64, 3), dtype=np.uint8)
+        def release(self):
+            released.append(True)
+    class Backend:
+        def __init__(self, **kwargs):
+            assert kwargs == {"mode": "lightweight", "device": "cpu"}
+        def infer(self, frame):
+            assert frame.shape == (64, 64, 3)
+            return [object(), object()]
+    monkeypatch.setattr(cv2, "VideoCapture", lambda _: Capture())
+    monkeypatch.setattr(pose, "RTMLibPoseBackend", Backend)
+    report = desktop.smoke_inference(_paths(tmp_path))
+    assert report["status"] == "inference_smoke_passed"
+    assert report["accuracy_validated"] is False
+    assert report["detected_people"] == 2
+    assert released
+
+
 def _paths(tmp_path: Path) -> desktop.DesktopPaths:
     bundle = tmp_path / "application"
     bundle.mkdir(exist_ok=True)

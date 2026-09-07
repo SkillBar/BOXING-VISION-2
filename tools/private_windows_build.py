@@ -88,6 +88,7 @@ def main() -> None:
     from pywinauto import Desktop
 
     executable = builds[0] / "dist/BoxingVision/BoxingVision.exe"
+    subprocess.run([str(executable), "--smoke-inference"], cwd=executable.parent, check=True, timeout=180)
     process = subprocess.Popen([str(executable)], cwd=executable.parent)
     qa = output / "delivery/screenshots"
     qa.mkdir()

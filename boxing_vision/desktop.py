@@ -516,6 +516,42 @@ def show_startup_error(message: str) -> None:
         print(message, file=sys.stderr)
 
 
+def smoke_inference(paths: DesktopPaths) -> dict[str, Any]:
+    """One real detector/pose call from the frozen bundle; not an accuracy eval."""
+    import time
+
+    import cv2
+    import numpy as np
+
+    from .pose import RTMLibPoseBackend
+
+    video = paths.bundle / "demo" / "workspace-preview.mp4"
+    capture = cv2.VideoCapture(str(video))
+    try:
+        capture.set(cv2.CAP_PROP_POS_MSEC, 49583)
+        ok, frame = capture.read()
+    finally:
+        capture.release()
+    if not ok:
+        raise DesktopSetupError("Не удалось декодировать кадр встроенного видео для проверки ML")
+    start = time.monotonic()
+    poses = RTMLibPoseBackend(mode="lightweight", device="cpu").infer(frame)
+    if not poses:
+        raise DesktopSetupError("Проверка ML не обнаружила людей на контрольном кадре")
+    report = {"status": "inference_smoke_passed", "accuracy_validated": False,
+              "detected_people": len(poses), "seconds": round(time.monotonic() - start, 3)}
+    model_path = paths.bundle / "models/acm40960-lstm-v1/model.onnx"
+    if model_path.is_file():
+        import onnxruntime as ort
+
+        session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        outputs = session.run(None, {session.get_inputs()[0].name: np.zeros((1, 25, 16), dtype=np.float32)})
+        if not all(np.isfinite(output).all() for output in outputs):
+            raise DesktopSetupError("Проверка классификатора вернула некорректные числа")
+        report["classifier_execution"] = "passed_on_synthetic_input_not_accuracy"
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Boxing Vision — локальное desktop-приложение"
@@ -524,6 +560,7 @@ def main() -> int:
     action.add_argument(
         "--check", action="store_true", help="Проверить комплект без открытия окна"
     )
+    action.add_argument("--smoke-inference", action="store_true", help="Проверить исполнение моделей на кадре встроенного демо")
     action.add_argument(
         "--open-run", metavar="ID_OR_PATH",
         help="Открыть сохранённый анализ по ID или полному пути внутри каталога runs приложения",
@@ -552,6 +589,10 @@ def main() -> int:
         seed_model_cache(paths, manifest)
         if manifest["offline_ready"]:
             verify_media_tools(paths)
+        if args.smoke_inference:
+            report = smoke_inference(paths)
+            (paths.logs / "inference-smoke.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            return 0
         if args.check:
             if sys.stdout is not None:
                 print(
@@ -572,7 +613,7 @@ def main() -> int:
         logging.getLogger("boxing_vision.desktop").exception("Desktop startup failed")
         message = f"Boxing Vision не запущен: {exc}\nНа Windows требуется Microsoft Edge WebView2 Runtime. Подробности — в logs/desktop.log."
         # Build/preflight probes must never wait for a native dialog click.
-        if not args.check:
+        if not (args.check or args.smoke_inference):
             show_startup_error(message)
         elif sys.stderr is not None:
             print(message, file=sys.stderr)
