@@ -24,6 +24,7 @@ for distribution in ("gradio", "gradio_client", "rtmlib", "onnxruntime", "tracke
 datas += collect_data_files("pythonnet")
 # safehttpx reads version.txt during import; metadata alone does not include it.
 datas += collect_data_files("safehttpx")
+datas += collect_data_files("groovy")
 for item in payload.rglob("*"):
     if item.is_file() and "prerequisites" not in item.relative_to(payload).parts:
         datas.append((str(item), str(item.parent.relative_to(payload))))

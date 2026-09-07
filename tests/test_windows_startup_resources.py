@@ -5,6 +5,7 @@ def test_safehttpx_runtime_version_file_is_included_in_frozen_app():
     root = Path(__file__).resolve().parents[1]
     spec = (root / "packaging/windows/boxing_vision.spec").read_text()
     assert 'collect_data_files("safehttpx")' in spec
+    assert 'collect_data_files("groovy")' in spec
 
 
 def test_window_title_alone_does_not_pass_installed_app_qa():
