@@ -48,7 +48,7 @@ def test_font_paths_are_quoted_and_versioned_by_mtime(tmp_path: Path) -> None:
     os.utime(medium, ns=(1_700_000_000_000_000_000, 1_700_000_000_100_000_000))
     assets, css = installed_display_font_assets(fonts_dir=font_dir)
     assert assets == [medium.resolve()]
-    assert f'/gradio_api/file={quote(str(medium.resolve()), safe="/")}?v={medium.stat().st_mtime_ns}' in css
+    assert f'/gradio_api/file={quote(medium.resolve().as_posix(), safe="/")}?v={medium.stat().st_mtime_ns}' in css
     assert "Local%20Fonts%20%23%20test" in css
     assert "Local Fonts # test" not in css
     os.utime(medium, ns=(1_700_000_000_000_000_000, 1_700_000_000_200_000_000))

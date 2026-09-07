@@ -32,7 +32,15 @@ jobs:
       - name: Install application and desktop dependencies (no private assets)
         run: python -m pip install -e '.[dev]' -r packaging/windows/requirements.txt pytest-timeout cryptography
       - name: Python regressions on Windows
-        run: python -m pytest -o addopts= -v --timeout=60 --junitxml=qa/windows/python-tests.xml
+        # Media tests need both tools, not just the codec bundled inside OpenCV.
+        # Source is pinned to the same upstream build as the private installer.
+        run: |
+          Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.1-essentials_build.zip' -OutFile "$env:RUNNER_TEMP/ffmpeg.zip"
+          if ((Get-FileHash "$env:RUNNER_TEMP/ffmpeg.zip" -Algorithm SHA256).Hash.ToLower() -ne 'fec81ae03971d9dd4be3ebe02e263bd2ec1d789483f931bdba5f5715e65da2e9') { throw 'FFmpeg checksum mismatch' }
+          Expand-Archive "$env:RUNNER_TEMP/ffmpeg.zip" "$env:RUNNER_TEMP/ffmpeg"
+          $ffmpegBin = Get-ChildItem "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1 -ExpandProperty DirectoryName
+          $env:PATH = "$ffmpegBin;$env:PATH"
+          python -m pytest -o addopts= -v --timeout=60 --junitxml=qa/windows/python-tests.xml
       - name: Workspace regressions
         if: always()
         run: node tools/test_workspace_state.mjs
