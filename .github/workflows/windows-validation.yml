@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-validation-${{ github.ref }}
+  group: windows-validation-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -30,9 +30,9 @@ jobs:
         with:
           node-version: '22'
       - name: Install application and desktop dependencies (no private assets)
-        run: python -m pip install -e '.[dev]' -r packaging/windows/requirements.txt
+        run: python -m pip install -e '.[dev]' -r packaging/windows/requirements.txt pytest-timeout cryptography
       - name: Python regressions on Windows
-        run: python -m pytest -o addopts= -q --junitxml=qa/windows/python-tests.xml
+        run: python -m pytest -o addopts= -v --timeout=60 --junitxml=qa/windows/python-tests.xml
       - name: Workspace regressions
         if: always()
         run: node tools/test_workspace_state.mjs

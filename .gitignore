@@ -20,3 +20,4 @@ qa/
 :memory:.ses
 dist/
 build/
+private-transfer/

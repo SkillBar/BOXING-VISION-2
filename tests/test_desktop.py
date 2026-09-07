@@ -15,6 +15,12 @@ from boxing_vision import desktop
 from tools import build_windows
 
 
+@pytest.fixture(autouse=True)
+def no_real_message_boxes_in_unit_tests(monkeypatch):
+    # Native wizard/application screenshots have their own Windows GUI job.
+    monkeypatch.setattr(desktop, "show_startup_error", lambda message: None)
+
+
 def _paths(tmp_path: Path) -> desktop.DesktopPaths:
     bundle = tmp_path / "application"
     bundle.mkdir(exist_ok=True)
@@ -68,6 +74,25 @@ def _mutate_manifest(path: Path, mutate) -> None:
     document = json.loads(path.read_text())
     mutate(document)
     path.write_text(json.dumps(document))
+
+
+def test_private_build_authorization_is_not_misrepresented_as_redistribution_rights(tmp_path, monkeypatch):
+    inputs = _input_fixture(tmp_path, monkeypatch)
+    def authorize(document):
+        document["delivery_scope"] = "private_evaluation"
+        for record in document["files"]:
+            record.update(redistribution_approved=False, private_build_authorized=True,
+                          rights_note="Explicit private build request; distribution rights unconfirmed")
+    _mutate_manifest(inputs, authorize)
+    with pytest.raises(desktop.DesktopSetupError):
+        build_windows.validated_inputs(inputs)
+    records = build_windows.validated_inputs(inputs, private_evaluation=True)
+    assert all(record["redistribution_approved"] is False for record in records)
+    paths = _paths(tmp_path)
+    build_windows.stage_inputs(records, paths.bundle)
+    manifest = json.loads((paths.bundle / "bundle-manifest.json").read_text())
+    assert manifest["delivery_scope"] == "private_evaluation"
+    assert all("rights_note" in row for row in manifest["files"])
 
 
 def test_offline_webview_installer_is_setup_only_not_an_application_dependency(tmp_path, monkeypatch):

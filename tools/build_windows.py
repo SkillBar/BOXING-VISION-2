@@ -49,6 +49,9 @@ PUNCH_FILES = {
     "punch_manifest": "manifest.json",
     "punch_license": "LICENSE",
 }
+NOTICE_FILES = {"sf_license": "notices/Apple-SF-Pro-License.rtf",
+                "build_notice": "notices/PRIVATE-EVALUATION.txt",
+                "ffmpeg_license": "notices/FFmpeg-LICENSE.txt"}
 
 
 def windows_pe_x64(path: Path) -> bool:
@@ -107,7 +110,7 @@ def validate_public_model_manifest(document: Any) -> None:
     visit(document)
 
 
-def validated_inputs(manifest_path: Path) -> list[dict[str, Any]]:
+def validated_inputs(manifest_path: Path, *, private_evaluation: bool = False) -> list[dict[str, Any]]:
     manifest_path = manifest_path.resolve(strict=True)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
@@ -130,7 +133,7 @@ def validated_inputs(manifest_path: Path) -> list[dict[str, Any]]:
         raise DesktopSetupError(
             "Provide exactly one input for every required binary, model and SF Pro/Druk weight"
         )
-    allowed = REQUIRED_ROLES | set(PUNCH_FILES) | {"webview2"}
+    allowed = REQUIRED_ROLES | set(PUNCH_FILES) | set(NOTICE_FILES) | {"webview2"}
     if any(role not in allowed for role in roles):
         raise DesktopSetupError(
             "Unexpected input role: only explicit runtime assets are permitted"
@@ -153,11 +156,15 @@ def validated_inputs(manifest_path: Path) -> list[dict[str, Any]]:
         expected = str(record.get("sha256", "")).lower()
         if len(expected) != 64 or sha256_file(source) != expected:
             raise DesktopSetupError(f"Input SHA256 mismatch: {role}")
-        if (
-            record.get("redistribution_approved") is not True
-            or not record.get("license")
-            or not record.get("source_url")
-        ):
+        privately_authorized = (
+            private_evaluation
+            and manifest.get("delivery_scope") == "private_evaluation"
+            and record.get("private_build_authorized") is True
+            and bool(record.get("rights_note"))
+        )
+        if (not record.get("license") or not record.get("source_url") or (
+            record.get("redistribution_approved") is not True and not privately_authorized
+        )):
             raise DesktopSetupError(
                 f"Explicit provenance and permission for this build are required: {role}"
             )
@@ -192,6 +199,8 @@ def validated_inputs(manifest_path: Path) -> list[dict[str, Any]]:
             ):
                 raise DesktopSetupError(f"Unsupported font format for {role}")
             destination = f"fonts/{FONT_NAMES[role]}{extension}"
+        elif role in NOTICE_FILES:
+            destination = NOTICE_FILES[role]
         else:
             destination = f"models/acm40960-lstm-v1/{PUNCH_FILES[role]}"
             if role == "punch_manifest":
@@ -206,7 +215,9 @@ def validated_inputs(manifest_path: Path) -> list[dict[str, Any]]:
                 "sha256": expected,
                 "license": str(record["license"]),
                 "source_url": str(record["source_url"]),
-                "redistribution_approved": True,
+                "redistribution_approved": record.get("redistribution_approved") is True,
+                **({"private_build_authorized": True, "rights_note": str(record["rights_note"])}
+                   if privately_authorized else {}),
             }
         )
     return result
@@ -227,6 +238,9 @@ def stage_inputs(records: list[dict[str, Any]], stage: Path) -> None:
     payload = {
         "schema_version": 1,
         "platform": "windows-x64",
+        "delivery_scope": "private_evaluation" if any(
+            row.get("private_build_authorized") and not row.get("redistribution_approved") for row in records
+        ) else "approved_distribution",
         "files": [
             {key: value for key, value in row.items() if key != "source"}
             for row in records if row["role"] != "webview2"
@@ -265,6 +279,8 @@ def main() -> int:
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("dist/windows"))
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--private-evaluation", action="store_true",
+                        help="Explicit private build authorization; does not assert redistribution rights")
     parser.add_argument("--demo", type=Path, help="Explicit prepared read-only demo directory; never scan local runs")
     parser.add_argument(
         "--iscc",
@@ -280,7 +296,7 @@ def main() -> int:
         parser.error(
             "A real Windows x64 Python host is required; PyInstaller is not a Windows cross-compiler on macOS"
         )
-    records = validated_inputs(args.inputs)
+    records = validated_inputs(args.inputs, private_evaluation=args.private_evaluation)
     if args.iscc and not any(row["role"] == "webview2" for row in records):
         parser.error("The simple installer requires an approved offline WebView2 input (role=webview2)")
     if args.demo:
@@ -338,7 +354,7 @@ def main() -> int:
     executable = work / "dist" / "BoxingVision" / "BoxingVision.exe"
     if not executable.is_file() or not windows_pe_x64(executable):
         raise DesktopSetupError("PyInstaller did not produce a Windows x64 executable")
-    subprocess.run([str(executable), "--check"], check=True, cwd=executable.parent)
+    subprocess.run([str(executable), "--check"], check=True, cwd=executable.parent, timeout=120)
     if args.iscc:
         compiler = args.iscc.resolve(strict=True)
         runtime = next(row for row in records if row["role"] == "webview2")

@@ -37,6 +37,19 @@ Required before calling a release ready:
    algorithmic pair coverage is below the target; the presence of more boxes or
    candidates is not proof of correct identities or punches.
 
+2026-09-07: the production Inno script compiled on Windows Server 2022, its
+Russian wizard reached completion, the installed inert test payload matched
+its input, and uninstall succeeded (Actions run 34124692104). Five real wizard
+screenshots were retained. This is installer-probe evidence, not application QA.
+
+The user subsequently explicitly authorized encrypted transfer of the prepared
+demo and requested SF Pro/Druk in a private investor build. The explicit
+`--private-evaluation` path preserves `redistribution_approved: false`, the
+authorization scope, original license and rights limitations. It does not
+convert private use into a license grant or authorize public distribution.
+The separate private build workflow returns only AES-GCM ciphertext; no release
+EXE, unencrypted fonts or footage is uploaded publicly. Final app/ML QA is pending.
+
 Local tests on macOS are regression evidence, not a Windows or ML quality gate.
 The CI installer probe compiles the unchanged installer script with an inert
 test payload, exercises the real wizard, and retains screenshots/logs only.

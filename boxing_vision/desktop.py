@@ -507,6 +507,15 @@ def launch_desktop(
         session.close()
 
 
+def show_startup_error(message: str) -> None:
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, "Boxing Vision", 0x10)
+    elif sys.stderr is not None:
+        print(message, file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Boxing Vision — локальное desktop-приложение"
@@ -562,10 +571,9 @@ def main() -> int:
     except (DesktopSetupError, ImportError, OSError, RuntimeError, ValueError) as exc:
         logging.getLogger("boxing_vision.desktop").exception("Desktop startup failed")
         message = f"Boxing Vision не запущен: {exc}\nНа Windows требуется Microsoft Edge WebView2 Runtime. Подробности — в logs/desktop.log."
-        if sys.platform == "win32":
-            import ctypes
-
-            ctypes.windll.user32.MessageBoxW(0, message, "Boxing Vision", 0x10)
+        # Build/preflight probes must never wait for a native dialog click.
+        if not args.check:
+            show_startup_error(message)
         elif sys.stderr is not None:
             print(message, file=sys.stderr)
         return 1
