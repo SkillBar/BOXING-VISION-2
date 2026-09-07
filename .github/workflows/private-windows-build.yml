@@ -12,7 +12,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # GitHub restricts draft-release visibility to collaborators with write access.
+  # Used only to DOWNLOAD the ciphertext draft; no release publishing step exists.
+  contents: write
 
 jobs:
   build:
