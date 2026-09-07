@@ -130,7 +130,7 @@ def validated_inputs(manifest_path: Path) -> list[dict[str, Any]]:
         raise DesktopSetupError(
             "Provide exactly one input for every required binary, model and SF Pro/Druk weight"
         )
-    allowed = REQUIRED_ROLES | set(PUNCH_FILES)
+    allowed = REQUIRED_ROLES | set(PUNCH_FILES) | {"webview2"}
     if any(role not in allowed for role in roles):
         raise DesktopSetupError(
             "Unexpected input role: only explicit runtime assets are permitted"
@@ -161,7 +161,15 @@ def validated_inputs(manifest_path: Path) -> list[dict[str, Any]]:
             raise DesktopSetupError(
                 f"Explicit provenance and permission for this build are required: {role}"
             )
-        if role in {"ffmpeg", "ffprobe"}:
+        if role == "webview2":
+            # The signed installer container can be x86 even for the x64 runtime.
+            # Validate publisher on the Windows build host, not just its name.
+            with source.open("rb") as handle:
+                executable_header = handle.read(2)
+            if source.suffix.lower() != ".exe" or executable_header != b"MZ":
+                raise DesktopSetupError("WebView2 must be the official Evergreen Standalone x64 installer")
+            destination = "prerequisites/WebView2RuntimeInstaller.exe"
+        elif role in {"ffmpeg", "ffprobe"}:
             if not windows_pe_x64(source):
                 raise DesktopSetupError(
                     f"{role} must be a Windows x64 PE executable, not a renamed Mac binary"
@@ -221,12 +229,35 @@ def stage_inputs(records: list[dict[str, Any]], stage: Path) -> None:
         "platform": "windows-x64",
         "files": [
             {key: value for key, value in row.items() if key != "source"}
-            for row in records
+            for row in records if row["role"] != "webview2"
         ],
     }
     (stage / "bundle-manifest.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def create_recipient_folder(installer: Path, output: Path) -> Path:
+    """Two recipient-facing files only, after a real installer was produced."""
+    if not installer.is_file() or installer.stat().st_size < 1024:
+        raise DesktopSetupError("Installer missing: cannot create a recipient package from source code")
+    with installer.open("rb") as handle:
+        if handle.read(2) != b"MZ":
+            raise DesktopSetupError("Expected a Windows installer, not a renamed archive")
+    output.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(installer, output / "BoxingVision-Setup.exe")
+    (output / "Начать здесь.txt").write_text(
+        "Boxing Vision — установка\n\n"
+        "1. Скачайте всю папку на компьютер с Windows 10/11 x64.\n"
+        "2. Откройте BoxingVision-Setup.exe и нажмите «Установить».\n"
+        "3. Запустите Boxing Vision с рабочего стола.\n\n"
+        "Python, библиотеки и модели уже входят в приложение. Команды вводить не нужно.\n"
+        "При необходимости установщик подготовит Microsoft WebView2 автоматически.\n"
+        "Если в комплект включён демо-разбор, он откроется сразу. Для своего видео нажмите «Новый анализ».\n\n"
+        "Если Windows или антивирус блокирует установку, не отключайте защиту: передайте сообщение отправителю.\n",
+        encoding="utf-8-sig",
+    )
+    return output
 
 
 def main() -> int:
@@ -250,6 +281,8 @@ def main() -> int:
             "A real Windows x64 Python host is required; PyInstaller is not a Windows cross-compiler on macOS"
         )
     records = validated_inputs(args.inputs)
+    if args.iscc and not any(row["role"] == "webview2" for row in records):
+        parser.error("The simple installer requires an approved offline WebView2 input (role=webview2)")
     if args.demo:
         from boxing_vision.demo_bundle import verify_demo
         verify_demo(args.demo)
@@ -308,16 +341,28 @@ def main() -> int:
     subprocess.run([str(executable), "--check"], check=True, cwd=executable.parent)
     if args.iscc:
         compiler = args.iscc.resolve(strict=True)
+        runtime = next(row for row in records if row["role"] == "webview2")
+        # Avoid interpolating paths into PowerShell source. Env carries a literal
+        # path; an unsigned or non-Microsoft installer never gets embedded.
+        signature_env = dict(environment, BOXING_VISION_PREREQUISITE=str(safe_bundle_file(stage, runtime["path"])))
+        subprocess.run([
+            "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+            ("$s = Get-AuthenticodeSignature -LiteralPath $env:BOXING_VISION_PREREQUISITE; "
+             "if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch '(?:^|, )O=Microsoft Corporation(?:,|$)') { exit 1 }"),
+        ], check=True, env=signature_env)
         subprocess.run(
             [
                 str(compiler),
                 f"/DBundleDir={executable.parent}",
+                f"/DWebView2Installer={safe_bundle_file(stage, runtime['path'])}",
                 f"/O{work / 'installer'}",
                 str(root / "packaging/windows/installer.iss"),
             ],
             check=True,
             cwd=root,
         )
+        create_recipient_folder(work / "installer" / "BoxingVision-Setup-x64.exe",
+                                work / "handoff" / "BoxingVision-Windows")
     (work / "build-report.json").write_text(
         json.dumps(
             {

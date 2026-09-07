@@ -1,7 +1,9 @@
 # Windows delivery status
 
 This branch contains the Windows application source and build tooling, **not a
-verified Windows executable**. No Windows host was available for the local work.
+verified Windows executable**. Local development is on macOS; the Windows
+Actions validation workflow now runs native regression and installer checks.
+Consult the actual run result, not the presence of the workflow, for evidence.
 
 Implemented:
 
@@ -9,6 +11,10 @@ Implemented:
   close/cancel handling, Windows-safe media subprocesses.
 - PyInstaller onedir build and optional Inno Setup installer, explicit resource
   SHA256/provenance allowlist, saved-run opening.
+- Installer source now includes an offline WebView2 prerequisite check/install,
+  Microsoft publisher validation on the build host, and a two-file recipient
+  folder generated only after compilation. Python/libraries are embedded, not
+  installed globally. These installer paths still need native Windows testing.
 - Optional preloaded read-only demo with an initial paused video frame, timeline,
   statistics and preview sprites. No inference is needed to view the example.
 - Non-blocking identity preflight: temporary missing fighters no longer abort
@@ -32,5 +38,9 @@ Required before calling a release ready:
    candidates is not proof of correct identities or punches.
 
 Local tests on macOS are regression evidence, not a Windows or ML quality gate.
+The CI installer probe compiles the unchanged installer script with an inert
+test payload, exercises the real wizard, and retains screenshots/logs only.
+It does not publish an EXE and is not an investor build. A runner with WebView2
+already installed does not test the missing-runtime/offline installation path.
 The branch removes previously tracked environments, caches and run media from
 its current tree. This does **not** erase files from older Git history or main.

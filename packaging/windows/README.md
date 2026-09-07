@@ -35,8 +35,11 @@ a Windows executable must be built on a real Windows host.
 1. Windows 10/11 x64 with x64 Python **3.12**, a clean virtual environment, and
    Microsoft [Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
    pywebview's [engine requirements](https://pywebview.flowrl.com/guide/web_engine.html)
-   also specify .NET Framework 4.6.2 or newer. These are prerequisites; this
-   repository does not silently download or install them.
+   also specify .NET Framework 4.6.2 or newer. The installer targets Windows 10
+   build 17763+ / Windows 11, which include a newer .NET Framework. Python is
+   bundled by PyInstaller; the recipient does not install Python or run pip.
+   Setup checks for WebView2 and installs the supplied offline Microsoft runtime
+   only if absent. The build host still needs WebView2 for GUI validation.
 2. Windows x64 FFmpeg and ffprobe executables, with their required DLLs already
    resolved. For the first package use a self-contained/static distribution:
    only the two explicitly supplied executables are copied. FFmpeg must have
@@ -51,7 +54,12 @@ a Windows executable must be built on a real Windows host.
    record it in the manifest. The validator checks your explicit approval, not
    the legal sufficiency of a license. Include applicable full notices/source
    offers before sharing an installer. Code licensing is not weight/data licensing.
-6. Optional Inno Setup 6 with an explicit `ISCC.exe` path, for an installer.
+6. Optional Inno Setup 6 with an explicit `ISCC.exe` path, for an installer. This
+   mode additionally requires an explicit `webview2` input: the official Microsoft
+   **Evergreen Standalone x64** installer (not the online bootstrapper), with the
+   same SHA256, source_url, license and redistribution approval fields. Its valid
+   Microsoft Authenticode signature is checked on Windows before compilation.
+   Download it from https://developer.microsoft.com/microsoft-edge/webview2/.
 
 ## Build
 
@@ -119,6 +127,8 @@ Outputs:
 - `dist/windows/boxing-vision-build-*/dist/BoxingVision/BoxingVision.exe`
 - the accompanying `_internal` directory — **do not send the exe alone**;
 - optional `installer/BoxingVision-Setup-x64.exe`;
+- `handoff/BoxingVision-Windows/` with the installer and `Начать здесь.txt` —
+  the only folder the recipient needs. Created only after ISCC produces an EXE;
 - `build-report.json`, recording hash and status `built_needs_windows_visual_and_video_QA`.
 
 At first launch, verified detector/pose files are copied into the writable RTMLib
@@ -126,6 +136,13 @@ cache without network access. Integrity/resource preflight runs before UI/model
 initialization. `BoxingVision.exe --check` validates the bundle and FFmpeg codecs;
 it does not replace a real analysis/inference test. A missing complete bundle
 fails clearly instead of claiming an offline-ready application.
+
+Setup displays prerequisite installation in its confirmation page, checks the
+documented WebView2 HKLM32/HKCU runtime keys and uses `/silent /install` only when
+missing. A failed installation or required restart stops Setup with an actionable
+message, rather than opening a broken app. Corporate policies can still prohibit
+runtime installation. WebView2 is a shared component and is not removed on app
+uninstall. No global Python, pip packages or PATH changes are made on the recipient.
 
 ## Reopen a saved analysis
 
@@ -170,3 +187,13 @@ saved run does not substitute demo boxer portraits for its actual profiles.
 
 Current status: launcher/build logic can be unit-tested on Mac; actual Windows
 packaging, model execution, WebView playback and installer QA are **pending**.
+
+## Native Windows validation
+
+The `Windows validation (not a release)` GitHub workflow runs on the Windows
+branch. It installs application dependencies and runs regression tests on
+Windows x64, separately compiling and exercising the production Inno wizard.
+The wizard test uses an inert executable, not private video, fonts or weights.
+Its screenshot artifact is real Windows UI evidence, **not a downloadable
+investor release**. No fixture EXE is uploaded. A full approved resource bundle
+and clean-machine application tests are still required for delivery.

@@ -70,6 +70,24 @@ def _mutate_manifest(path: Path, mutate) -> None:
     path.write_text(json.dumps(document))
 
 
+def test_offline_webview_installer_is_setup_only_not_an_application_dependency(tmp_path, monkeypatch):
+    inputs = _input_fixture(tmp_path, monkeypatch)
+    runtime = tmp_path / "WebView2Standalone.exe"
+    runtime.write_bytes(_pe(machine=0x014c))  # Container architecture != runtime payload architecture.
+    _mutate_manifest(inputs, lambda doc: doc["files"].append({
+        "source": str(runtime), "role": "webview2", "sha256": desktop.sha256_file(runtime),
+        "license": "Test fixture only", "source_url": "https://developer.microsoft.com/microsoft-edge/webview2/",
+        "redistribution_approved": True,
+    }))
+    records = build_windows.validated_inputs(inputs)
+    paths = _paths(tmp_path)
+    build_windows.stage_inputs(records, paths.bundle)
+    assert (paths.bundle / "prerequisites/WebView2RuntimeInstaller.exe").is_file()
+    bundled = json.loads((paths.bundle / "bundle-manifest.json").read_text())
+    assert "webview2" not in {r["role"] for r in bundled["files"]}
+    assert desktop.verify_bundle(paths)["offline_ready"] is True
+
+
 class _Event:
     def __init__(self):
         self.callbacks = []

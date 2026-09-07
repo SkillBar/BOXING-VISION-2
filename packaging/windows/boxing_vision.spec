@@ -19,10 +19,10 @@ for package in ("gradio", "gradio_client", "rtmlib", "onnxruntime", "trackers", 
     hiddenimports += package_hidden
 for distribution in ("gradio", "gradio_client", "rtmlib", "onnxruntime", "trackers", "supervision", "scenedetect", "pywebview"):
     datas += copy_metadata(distribution, recursive=True)
-# Package pythonnet/WebView2 runtime resources; Edge itself is an explicit OS prerequisite.
+# Package WebView2 loader/.NET resources; Setup supplies the missing OS runtime.
 datas += collect_data_files("pythonnet")
 for item in payload.rglob("*"):
-    if item.is_file():
+    if item.is_file() and "prerequisites" not in item.relative_to(payload).parts:
         datas.append((str(item), str(item.parent.relative_to(payload))))
 
 a = Analysis(
